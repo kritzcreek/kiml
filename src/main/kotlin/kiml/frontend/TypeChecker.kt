@@ -76,6 +76,13 @@ class TypeChecker {
 
     private fun lookupType(ty: Name): TypeInfo = checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
 
+    private fun lookupDataConstructor(ty: Name, dtor: Name): Pair<List<TyVar>, List<Monotype>> {
+        val tyInfo = lookupType(ty)
+        val dataConstructor = tyInfo.constructors.find { it.name == dtor }
+            ?: throw Exception("Unknown dtor $ty::$dtor")
+        return tyInfo.tyArgs to dataConstructor.args
+    }
+
     private fun instantiate(ty: Polytype): Monotype {
         var result = ty.type
         for (v in ty.vars) {
@@ -192,19 +199,15 @@ class TypeChecker {
                 val tyRes = freshUnknown()
                 expr.cases.forEach {
                     val typedNames = inferPattern(it.pattern, tyExpr)
-                    val tyCase = bindNamesMono(typedNames) {
-                        infer(it.expr)
-                    }
+                    val tyCase = bindNamesMono(typedNames) { infer(it.expr) }
                     unify(tyRes, tyCase)
                 }
                 tyRes
             }
             is Expression.Construction -> {
-                val tyInfo = lookupType(expr.ty)
-                val dtor = tyInfo.constructors.find { it.name == expr.dtor }
-                        ?: throw Exception("Unknown dtor ${expr.ty}::${expr.dtor}")
-                val freshVars = tyInfo.tyArgs.map { it to freshUnknown() }
-                expr.fields.zip(dtor.args).forEach { (expr, ty) ->
+                val (tyArgs, fields) = lookupDataConstructor(expr.ty, expr.dtor)
+                val freshVars = tyArgs.map { it to freshUnknown() }
+                expr.fields.zip(fields).forEach { (expr, ty) ->
                     unify(ty.subst_many(freshVars), infer(expr))
                 }
                 Monotype.Constructor(expr.ty, freshVars.map { it.second })
@@ -215,12 +218,10 @@ class TypeChecker {
     private fun inferPattern(pattern: Pattern, ty: Monotype): List<Pair<Name, Monotype>> {
         return when (pattern) {
             is Pattern.Constructor -> {
-                val tyInfo = lookupType(pattern.ty)
-                val dtor = tyInfo.constructors.find { it.name == pattern.dtor }
-                    ?: throw Exception("Unknown dtor ${pattern.dtor}")
-                val freshVars = tyInfo.tyArgs.map { it to freshUnknown() }
+                val (tyArgs, fields) = lookupDataConstructor(pattern.ty, pattern.dtor)
+                val freshVars = tyArgs.map { it to freshUnknown() }
                 unify(ty, Monotype.Constructor(pattern.ty, freshVars.map { it.second }))
-                pattern.fields.zip(dtor.args).flatMap { (pat, ty) -> inferPattern(pat, ty.subst_many(freshVars)) }
+                pattern.fields.zip(fields).flatMap { (pat, ty) -> inferPattern(pat, ty.subst_many(freshVars)) }
             }
             is Pattern.Var -> listOf(pattern.v to ty)
         }

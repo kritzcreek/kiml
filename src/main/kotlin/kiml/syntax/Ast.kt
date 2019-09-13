@@ -67,7 +67,7 @@ sealed class Monotype {
         }
     }
 
-    private fun unknownsInner(acc: HashSet<kotlin.Int>) {
+    private fun unknownsInner(acc: HashSet<Int>) {
         when (this) {
             is Constructor -> this.arguments.forEach { it.unknownsInner(acc) }
             is Var -> {
@@ -80,8 +80,8 @@ sealed class Monotype {
         }
     }
 
-    fun unknowns(): HashSet<kotlin.Int> {
-        val res = HashSet<kotlin.Int>()
+    fun unknowns(): HashSet<Int> {
+        val res = HashSet<Int>()
         unknownsInner(res)
         return res
     }
