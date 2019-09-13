@@ -29,8 +29,8 @@ data class Case(val pattern: Pattern, val expr: Expression) {
 }
 
 sealed class Pattern {
-    data class Constructor(val ty: Name, val dtor: Name, val fields: List<Pattern>): Pattern()
-    data class Var(val v: Name): Pattern()
+    data class Constructor(val ty: Name, val dtor: Name, val fields: List<Pattern>) : Pattern()
+    data class Var(val v: Name) : Pattern()
 
     fun pretty(): String = when (this) {
         is Constructor -> "$ty::$dtor(${fields.joinToString(", ") { it.pretty() }})"
@@ -56,7 +56,11 @@ sealed class Monotype {
 
     fun pretty(): String {
         return when (this) {
-            is Constructor -> "${this.name} ${this.arguments.joinToString(" ") { it.pretty() }}"
+            is Constructor -> "${this.name}" + if (arguments.isNotEmpty()) {
+                "<${this.arguments.joinToString(", ") { it.pretty() }}>"
+            } else {
+                ""
+            }
             is Unknown -> "u${this.u}"
             is Var -> this.v.v
             is Function -> "(${this.argument.pretty()} -> ${this.result.pretty()})"

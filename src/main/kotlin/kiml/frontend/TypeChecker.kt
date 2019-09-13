@@ -203,7 +203,11 @@ class TypeChecker {
                 val tyInfo = lookupType(expr.ty)
                 val dtor = tyInfo.constructors.find { it.name == expr.dtor }
                         ?: throw Exception("Unknown dtor ${expr.ty}::${expr.dtor}")
-                Monotype.int
+                val freshVars = tyInfo.tyArgs.map { it to freshUnknown() }
+                expr.fields.zip(dtor.args).forEach { (expr, ty) ->
+                    unify(ty.subst_many(freshVars), infer(expr))
+                }
+                Monotype.Constructor(expr.ty, freshVars.map { it.second })
             }
         }
     }
@@ -231,7 +235,7 @@ fun main() {
 
     val expr = Expression.Lambda(
         Name("x"), Expression.Match(
-            Expression.Var(Name("x")), listOf(
+            Expression.Construction(Name("Maybe"), Name("Just"), fields = listOf(Expression.Var(Name("x")))), listOf(
                 Case(
                     Pattern.Constructor(
                         Name("Maybe"),
