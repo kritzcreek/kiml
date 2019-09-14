@@ -38,7 +38,6 @@ sealed class Pattern {
     }
 }
 
-data class DataConstructor(val name: Name, val args: List<Monotype>)
 
 inline class TyVar(val v: String) {
     override fun toString(): String = v
@@ -47,6 +46,13 @@ inline class TyVar(val v: String) {
 inline class Name(val v: String) {
     override fun toString(): String = v
 }
+
+data class TypeDeclaration(
+    val name: Name,
+    val typeVariables: List<TyVar>,
+    val dataConstructors: List<DataConstructor>
+)
+data class DataConstructor(val name: Name, val args: List<Monotype>)
 
 sealed class Monotype {
     data class Constructor(val name: Name, val arguments: List<Monotype>) : Monotype()

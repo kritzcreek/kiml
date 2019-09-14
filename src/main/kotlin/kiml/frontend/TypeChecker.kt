@@ -51,14 +51,7 @@ data class CheckState(
     val typeMap: TypeMap = TypeMap(
         hashMapOf(
             Name("Int") to TypeInfo.empty,
-            Name("Bool") to TypeInfo.empty,
-            Name("Maybe") to TypeInfo(
-                listOf(TyVar("a")),
-                listOf(
-                    DataConstructor(Name("Nothing"), emptyList()),
-                    DataConstructor(Name("Just"), listOf(Monotype.Var(TyVar("a"))))
-                )
-            )
+            Name("Bool") to TypeInfo.empty
         )
     ),
     var fresh_supply: Int = 0
@@ -73,6 +66,10 @@ class TypeChecker {
 
     private fun lookupName(v: Name): Monotype =
         checkState.environment.env[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
+
+    fun addType(tyDecl: TypeDeclaration) {
+        checkState.typeMap.tm.put(tyDecl.name, TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors))
+    }
 
     private fun lookupType(ty: Name): TypeInfo = checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
 
@@ -232,22 +229,18 @@ class TypeChecker {
 }
 
 fun main() {
-//    val expr = Parser(Lexer("let id = (\\x. x) in if id true then id 24 else 10")).parseExpression()
-
-    val expr = Expression.Lambda(
-        Name("x"), Expression.Match(
-            Expression.Construction(Name("Maybe"), Name("Just"), fields = listOf(Expression.Var(Name("x")))), listOf(
-                Case(
-                    Pattern.Constructor(
-                        Name("Maybe"),
-                        Name("Just"),
-                        listOf(Pattern.Constructor(Name("Maybe"), Name("Just"), listOf(Pattern.Var(Name("x")))))
-                    ), Expression.Var(Name("x"))
-                ),
-                Case(Pattern.Constructor(Name("Maybe"), Name("Nothing"), listOf()), Expression.Int(10))
-            )
-        )
-    )
+    val input =
+"""
+type Maybe a { Nothing(), Just(a) }
+\x.
+match x { 
+  Maybe::Just(Maybe::Just(x)) -> x,
+  Maybe::Nothing() -> true 
+}
+"""
+    val (tys, expr) = Parser(Lexer(input)).parseInput()
+    val tc = TypeChecker()
+    tys.forEach { tc.addType(it) }
     println("${expr.pretty()} : ")
-    println("  ${TypeChecker().inferExpr(expr).pretty()}")
+    println("   ${tc.inferExpr(expr).pretty()}")
 }
