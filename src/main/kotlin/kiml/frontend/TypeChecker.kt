@@ -231,10 +231,12 @@ class TypeChecker {
 fun main() {
     val input =
 """
-type Maybe a { Nothing(), Just(a) }
+type Maybe<a> { Nothing(), Just(a) }
+type Either<a, b> { Left(a), Right(b) }
 \x.
 match x { 
-  Maybe::Just(Maybe::Just(x)) -> x,
+  Maybe::Just(Either::Left(x)) -> x,
+  Maybe::Just(Either::Right(x)) -> isEven x,
   Maybe::Nothing() -> true 
 }
 """

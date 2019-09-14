@@ -19,8 +19,9 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         expectNext<Token.Type>(expectedError("expected type"))
         val name = parseUpperName()
 
-        val typeVariables = mutableListOf<TyVar>()
-        while (iterator.peek().value is Token.Ident) typeVariables.add(parseTyVar())
+        expectNext<Token.LAngle>(expectedError("expected open brace"))
+        val typeVariables = commaSeparated(::parseTyVar) { it !is Token.RAngle }
+        expectNext<Token.RAngle>(expectedError("expected closing brace"))
 
         expectNext<Token.LBrace>(expectedError("expected open brace"))
         val dataConstructors = commaSeparated(::parseDataConstructor) { it !is Token.RBrace }
