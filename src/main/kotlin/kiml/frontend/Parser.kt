@@ -209,7 +209,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         val expr = parseExpression()
         expectNext<Token.LBrace>(expectedError("expected open brace"))
         val cases = commaSeparated(::parseCase) { it !is Token.RBrace }
-        expectNext<Token.RBrace>(expectedError("expected open brace"))
+        expectNext<Token.RBrace>(expectedError("expected closing brace"))
         return Expression.Match(expr, cases)
     }
 

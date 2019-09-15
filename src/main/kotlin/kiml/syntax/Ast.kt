@@ -96,6 +96,7 @@ sealed class Monotype {
         when (this) {
             is Var -> if (scrutinee == v) ty else this
             is Function -> Function(argument.subst(scrutinee, ty), result.subst(scrutinee, ty))
+            is Constructor -> Constructor(name, arguments.map { it.subst(scrutinee, ty) })
             else -> this
         }
 

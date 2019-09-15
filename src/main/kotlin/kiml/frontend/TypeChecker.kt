@@ -138,24 +138,42 @@ class TypeChecker {
         checkState.substitution.subst[u] = ty
     }
 
+    data class UnifyException(val ty1: Monotype, val ty2: Monotype, val stack: MutableList<Pair<Monotype, Monotype>>): Exception() {
+        override fun toString(): String {
+            return """
+Failed to match ${ty1.pretty()} with ${ty2.pretty()}
+  ${stack.joinToString("\n  ") { (t1, t2) -> "while trying to match ${t1.pretty()} with ${t2.pretty()}" }}"""
+        }
+    }
+
     private fun unify(ty1: Monotype, ty2: Monotype) {
         val ty1 = zonk(ty1)
         val ty2 = zonk(ty2)
         if (ty1 == ty2) return
         when {
             ty1 is Monotype.Constructor && ty2 is Monotype.Constructor -> {
-                if (ty1.name != ty2.name) throw Exception("Failed to unify ${ty1.pretty()} with ${ty2.pretty()}")
-                ty1.arguments.zip(ty2.arguments) { t1, t2 ->
-                    unify(t1, t2)
+                if (ty1.name != ty2.name) throw UnifyException(ty1, ty2, mutableListOf())
+                try {
+                    ty1.arguments.zip(ty2.arguments) { t1, t2 ->
+                        unify(t1, t2)
+                    }
+                } catch (ex: UnifyException) {
+                    ex.stack.add(ty1 to ty2)
+                    throw ex
                 }
             }
             ty1 is Monotype.Unknown -> solveType(ty1.u, ty2)
             ty2 is Monotype.Unknown -> solveType(ty2.u, ty1)
             ty1 is Monotype.Function && ty2 is Monotype.Function -> {
-                unify(ty1.argument, ty2.argument)
-                unify(ty1.result, ty2.result)
+                try {
+                    unify(ty1.argument, ty2.argument)
+                    unify(ty1.result, ty2.result)
+                } catch (ex: UnifyException) {
+                    ex.stack.add(ty1 to ty2)
+                    throw ex
+                }
             }
-            else -> throw Exception("Failed to unify ${ty1.pretty()} with ${ty2.pretty()}")
+            else -> throw UnifyException(ty1, ty2, mutableListOf())
         }
     }
 
@@ -230,14 +248,15 @@ class TypeChecker {
 
 fun main() {
     val input =
-"""
+        """
 type Maybe<a> { Nothing(), Just(a) }
 type Either<a, b> { Left(a), Right(b) }
-\x.
-match x { 
-  Maybe::Just(Either::Left(x)) -> x,
-  Maybe::Just(Either::Right(x)) -> isEven x,
-  Maybe::Nothing() -> true 
+let 
+  fromMaybe = \def. \x. match x {
+    Maybe::Just(x) -> x,
+    Maybe::Nothing() -> def
+  } in
+fromMaybe 1 Maybe::Just(true)
 }
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
