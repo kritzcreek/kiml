@@ -7,6 +7,7 @@ sealed class Expression {
     data class Lambda(val binder: Name, val body: Expression) : Expression()
     data class App(val function: Expression, val argument: Expression) : Expression()
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
+    data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
     data class Construction(val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
@@ -18,6 +19,7 @@ sealed class Expression {
         is Lambda -> "(\\${this.binder} -> ${this.body.pretty()})"
         is App -> "(${this.function.pretty()}) ${this.argument.pretty()}"
         is Let -> "(let $binder ${type?.let { ": ${it.pretty()}" } ?: ""} = ${ expr.pretty() } in ${ body.pretty() })"
+        is LetRec -> "(let rec $binder ${type?.let { ": ${it.pretty()}" } ?: ""} = ${ expr.pretty() } in ${ body.pretty() })"
         is If -> "(if ${condition.pretty()} then ${thenCase.pretty()} else ${elseCase.pretty()})"
         is Construction -> "${ty}::${dtor}(${fields.joinToString(", ") { it.pretty() }})"
         is Match -> "match ${expr.pretty()} { ${cases.joinToString(", ") { it.pretty() }} }"

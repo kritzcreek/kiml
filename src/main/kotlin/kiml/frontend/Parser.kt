@@ -77,7 +77,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
                 iterator.next()
 
                 val type = parseType()
-                expectNext<Token.LParen>(expectedError("missing closing paren"))
+                expectNext<Token.RParen>(expectedError("missing closing paren"))
                 type
             }
             is Token.Ident -> {
@@ -177,8 +177,13 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         }
     }
 
-    private fun parseLet(): Expression.Let? {
+    private fun parseLet(): Expression {
         iterator.next()
+        var isRecursive = false
+        if (iterator.peek().value is Token.Rec) {
+            iterator.next()
+            isRecursive = true
+        }
         val binder = parseName()
         var type: Polytype? = null
         if (iterator.peek().value is Token.Colon) {
@@ -190,7 +195,11 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         expectNext<Token.In>(expectedError("expected in"))
         val body = parseExpression()
 
-        return Expression.Let(binder, type, expr, body)
+        return if (isRecursive) {
+            Expression.LetRec(binder, type, expr, body)
+        } else {
+            Expression.Let(binder, type, expr, body)
+        }
     }
 
     private fun parseIf(): Expression.If? { // if true then 3 else 4

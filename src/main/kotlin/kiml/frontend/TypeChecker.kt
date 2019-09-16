@@ -47,6 +47,9 @@ data class CheckState(
     val environment: Environment = {
         val res = Environment()
         res.insertMono(Name("isEven"), Monotype.Function(Monotype.int, Monotype.bool))
+        res.insertMono(Name("eq"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.bool))))
+        res.insertMono(Name("mul"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
+        res.insertMono(Name("sub"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
         res
     }(),
     val substitution: Substitution = Substitution(HashMap()),
@@ -236,7 +239,18 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
                     tyBinder = expr.type
                 }
                 bindName(expr.binder, tyBinder) { infer(expr.body) }
-
+            }
+            is Expression.LetRec -> {
+                if(expr.type != null) {
+                    val tyBinder = bindName(expr.binder, expr.type) { infer(expr.expr) }
+                    subsumes(Polytype.fromMono(tyBinder), expr.type)
+                    bindName(expr.binder, expr.type) { infer(expr.body) }
+                } else {
+                    val tyBinder = freshUnknown()
+                    val inferredBinder = bindNameMono(expr.binder, tyBinder) { infer(expr.expr) }
+                    unify(tyBinder, inferredBinder)
+                    bindNameMono(expr.binder, tyBinder) { infer(expr.body) }
+                }
             }
             is Expression.If -> {
                 val tyCond = infer(expr.condition)
@@ -288,13 +302,18 @@ fun main() {
         """
 type Maybe<a> { Nothing(), Just(a) }
 type Either<a, b> { Left(a), Right(b) }
+type List<a> { Cons(a, List<a>), Nil() }
 let 
   fromMaybe : forall a. a -> Maybe<a> -> a = \def. \x. match x {
     Maybe::Just(x) -> x,
     Maybe::Nothing() -> def
   } in
 let identity : forall a. a -> a = \x. x in
-fromMaybe 1 (identity Maybe::Just(identity 4))
+let rec map : forall a b. (a -> b) -> List<a> -> List<b> = \f. \ls. match ls {
+  List::Nil() -> List::Nil(),
+  List::Cons(x, xs) -> List::Cons(f x, map f xs),
+} in
+map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
 }
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
