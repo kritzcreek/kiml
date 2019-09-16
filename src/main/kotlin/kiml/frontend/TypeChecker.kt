@@ -15,8 +15,6 @@ data class Substitution(val subst: HashMap<Int, Monotype>) {
             else -> ty
         }
 
-    fun apply(ty: Polytype): Polytype = ty.copy(type=apply(ty.type))
-
     override fun toString(): String =
         "{ " + subst.toList().joinToString("\n, ") { (u, ty) -> "u$u ↦ ${ty.pretty()}" } + "\n}"
 }
@@ -184,7 +182,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
 
     private fun subsumes(ty1: Polytype, ty2: Polytype) {
         val skolems: MutableList<Int> = mutableListOf()
-        subsumes_inner(ty1, ty2, skolems)
+        subsumesInner(ty1, ty2, skolems)
         for (skolem in skolems) {
             when(val ty = zonk(Monotype.Unknown(skolem))) {
                 is Monotype.Unknown -> {}
@@ -193,18 +191,18 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
         }
     }
 
-    private fun subsumes_inner(ty1: Polytype, ty2: Polytype, skolems: MutableList<Int>) {
+    private fun subsumesInner(ty1: Polytype, ty2: Polytype, skolems: MutableList<Int>) {
         when {
             ty1 == ty2 -> {}
             ty1.vars.isNotEmpty() ->
-                subsumes_inner(Polytype.fromMono(instantiate(ty1)), ty2, skolems)
+                subsumesInner(Polytype.fromMono(instantiate(ty1)), ty2, skolems)
             ty2.vars.isNotEmpty() -> {
-                val skolemStart = checkState.fresh_supply;
+                val skolemStart = checkState.fresh_supply
                 val skolemized = instantiate(ty2)
-                val skolemEnd = checkState.fresh_supply;
+                val skolemEnd = checkState.fresh_supply
                 (skolemStart..skolemEnd).forEach { skolems.add(it) }
 
-                subsumes_inner(ty1, Polytype.fromMono(skolemized), skolems)
+                subsumesInner(ty1, Polytype.fromMono(skolemized), skolems)
             }
             else ->
                 unify(ty1.type, ty2.type)
