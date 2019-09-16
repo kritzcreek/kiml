@@ -85,7 +85,14 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
                 Monotype.Var(tyVar)
             }
             is Token.UpperIdent -> {
-                Monotype.Constructor(parseUpperName(), emptyList())
+                val name = parseUpperName()
+                var args = emptyList<Monotype>()
+                if (iterator.peek().value is Token.LAngle) {
+                    expectNext<Token.LAngle>(expectedError("expected open brace"))
+                    args = commaSeparated(::parseType) { it !is Token.RAngle }
+                    expectNext<Token.RAngle>(expectedError("expected closing brace"))
+                }
+                Monotype.Constructor(name, args)
             }
             else -> throw RuntimeException("expected type found $nextToken at $start")
         }
@@ -173,12 +180,17 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
     private fun parseLet(): Expression.Let? {
         iterator.next()
         val binder = parseName()
+        var type: Polytype? = null
+        if (iterator.peek().value is Token.Colon) {
+            iterator.next()
+            type = parsePolytype()
+        }
         expectNext<Token.Equals>(expectedError("expected equals"))
         val expr = parseExpression()
         expectNext<Token.In>(expectedError("expected in"))
         val body = parseExpression()
 
-        return Expression.Let(binder, expr, body)
+        return Expression.Let(binder, type, expr, body)
     }
 
     private fun parseIf(): Expression.If? { // if true then 3 else 4
