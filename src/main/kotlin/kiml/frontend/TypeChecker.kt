@@ -42,7 +42,7 @@ data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<DataConstruc
 data class TypeMap(val tm: HashMap<Name, TypeInfo>)
 
 data class CheckState(
-    val environment: Environment = {
+    var environment: Environment = {
         val res = Environment()
         res.insertMono(Name("isEven"), Monotype.Function(Monotype.int, Monotype.bool))
         res.insertMono(Name("eq"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.bool))))
@@ -108,26 +108,23 @@ class TypeChecker {
     }
 
     private fun <A> bindNamesMono(names: List<Pair<Name, Monotype>>, action: () -> A): A =
-        names.fold(action) { k, (name, ty) ->
-            { bindNameMono(name, ty, k) }
-        }()
+        bindNames(names.map { (v, ty) -> v to Polytype.fromMono(ty) }, action)
 
-    private fun <A> bindNameMono(v: Name, ty: Monotype, action: () -> A): A =
-        bindName(v, Polytype(listOf(), ty), action)
-
-    private fun <A> bindName(v: Name, ty: Polytype, action: () -> A): A {
-        val prev = checkState.environment.env.put(v, ty)
+    private fun <A> bindNames(names: List<Pair<Name, Polytype>>, action: () -> A): A {
+        // Store the previous environment
+        val tmp = Environment(HashMap(checkState.environment.env))
+        names.forEach { (v, ty) -> checkState.environment.env[v] = ty }
         val res = action()
-        // If the name wasn't previously bound...
-        if (prev == null) {
-            // we need to remove it from the environment again
-            checkState.environment.env.remove(v)
-        } else {
-            // otherwise we need to restore the previous binding
-            checkState.environment.env[v] = prev
-        }
+        // restore the environment
+        checkState.environment = tmp
         return res
     }
+
+    private fun <A> bindNameMono(v: Name, ty: Monotype, action: () -> A): A =
+        bindNamesMono(listOf(v to ty), action)
+
+    private fun <A> bindName(v: Name, ty: Polytype, action: () -> A): A =
+        bindNames(listOf(v to ty), action)
 
     private fun occursCheck(u: Int, ty: Monotype) {
         if (ty is Monotype.Unknown) return
