@@ -141,7 +141,8 @@ class TypeChecker {
         checkState.substitution.subst[u] = ty
     }
 
-    data class UnifyException(val ty1: Monotype, val ty2: Monotype, val stack: MutableList<Pair<Monotype, Monotype>>): Exception() {
+    data class UnifyException(val ty1: Monotype, val ty2: Monotype, val stack: MutableList<Pair<Monotype, Monotype>>) :
+        Exception() {
         override fun toString(): String {
             return """
 Failed to match ${ty1.pretty()} with ${ty2.pretty()}
@@ -184,8 +185,9 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
         val skolems: MutableList<Int> = mutableListOf()
         subsumesInner(ty1, ty2, skolems)
         for (skolem in skolems) {
-            when(val ty = zonk(Monotype.Unknown(skolem))) {
-                is Monotype.Unknown -> {}
+            when (val ty = zonk(Monotype.Unknown(skolem))) {
+                is Monotype.Unknown -> {
+                }
                 else -> throw Exception("Tried to match skolem u$skolem with type ${ty.pretty()}")
             }
         }
@@ -193,7 +195,8 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
 
     private fun subsumesInner(ty1: Polytype, ty2: Polytype, skolems: MutableList<Int>) {
         when {
-            ty1 == ty2 -> {}
+            ty1 == ty2 -> {
+            }
             ty1.vars.isNotEmpty() ->
                 subsumesInner(Polytype.fromMono(instantiate(ty1)), ty2, skolems)
             ty2.vars.isNotEmpty() -> {
@@ -232,23 +235,22 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
             }
             is Expression.Let -> {
                 var tyBinder = Polytype.fromMono(infer(expr.expr))
-                if(expr.type != null) {
+                if (expr.type != null) {
                     subsumes(tyBinder, expr.type)
                     tyBinder = expr.type
                 }
                 bindName(expr.binder, tyBinder) { infer(expr.body) }
             }
             is Expression.LetRec -> {
-                if(expr.type != null) {
-                    val tyBinder = bindName(expr.binder, expr.type) { infer(expr.expr) }
-                    subsumes(Polytype.fromMono(tyBinder), expr.type)
-                    bindName(expr.binder, expr.type) { infer(expr.body) }
-                } else {
-                    val tyBinder = freshUnknown()
-                    val inferredBinder = bindNameMono(expr.binder, tyBinder) { infer(expr.expr) }
-                    unify(tyBinder, inferredBinder)
-                    bindNameMono(expr.binder, tyBinder) { infer(expr.body) }
+                val envBinder = expr.type ?: Polytype.fromMono(freshUnknown())
+                var tyBinder = bindName(expr.binder, envBinder) {
+                    Polytype.fromMono(infer(expr.expr))
                 }
+                if (expr.type != null) {
+                    subsumes(tyBinder, expr.type)
+                    tyBinder = expr.type
+                }
+                bindName(expr.binder, tyBinder) { infer(expr.body) }
             }
             is Expression.If -> {
                 val tyCond = infer(expr.condition)
@@ -301,18 +303,17 @@ fun main() {
 type Maybe<a> { Nothing(), Just(a) }
 type Either<a, b> { Left(a), Right(b) }
 type List<a> { Cons(a, List<a>), Nil() }
-let 
-  fromMaybe : forall a. a -> Maybe<a> -> a = \def. \x. match x {
+let fromMaybe : forall a. a -> Maybe<a> -> a =
+  \def. \x. match x {
     Maybe::Just(x) -> x,
     Maybe::Nothing() -> def
   } in
-let identity : forall a. a -> a = \x. x in
-let rec map : forall a b. (a -> b) -> List<a> -> List<b> = \f. \ls. match ls {
-  List::Nil() -> List::Nil(),
-  List::Cons(x, xs) -> List::Cons(f x, map f xs),
-} in
+let rec map : forall a b. (a -> b) -> List<a> -> List<b> = 
+  \f. \ls. match ls {
+    List::Nil() -> List::Nil(),
+    List::Cons(x, xs) -> List::Cons(f x, map f xs),
+  } in
 map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
-}
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
     val tc = TypeChecker()
