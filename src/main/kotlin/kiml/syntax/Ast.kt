@@ -59,7 +59,7 @@ sealed class Expression {
 
     sealed class Monotype {
         data class Constructor(val name: Name, val arguments: List<Monotype>) : Monotype()
-        data class Unknown(val u: kotlin.Int) : Monotype()
+        data class Unknown(val u: Int) : Monotype()
         data class Var(val v: TyVar) : Monotype()
         data class Function(val argument: Monotype, val result: Monotype) : Monotype()
 
@@ -122,6 +122,8 @@ sealed class Expression {
         } else {
             "forall ${vars.joinToString()}. ${type.pretty()}"
         }
+
+        fun isPoly(): Boolean = vars.isNotEmpty()
 
         companion object {
             fun fromMono(monotype: Monotype): Polytype = Polytype(emptyList(), monotype)

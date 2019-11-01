@@ -179,35 +179,8 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
     }
 
     private fun subsumes(ty1: Polytype, ty2: Polytype) {
-        val skolems: MutableList<Int> = mutableListOf()
-        subsumesInner(ty1, ty2, skolems)
-        for (skolem in skolems) {
-            when (val ty = zonk(Monotype.Unknown(skolem))) {
-                is Monotype.Unknown -> {
-                }
-                else -> throw Exception("Tried to match skolem u$skolem with type ${ty.pretty()}")
-            }
-        }
-    }
-
-    private fun subsumesInner(ty1: Polytype, ty2: Polytype, skolems: MutableList<Int>) {
-        when {
-            ty1 == ty2 -> {
-            }
-            ty1.vars.isNotEmpty() ->
-                subsumesInner(Polytype.fromMono(instantiate(ty1)), ty2, skolems)
-            ty2.vars.isNotEmpty() -> {
-                val skolemStart = checkState.fresh_supply
-                val skolemized = instantiate(ty2)
-                val skolemEnd = checkState.fresh_supply
-                (skolemStart..skolemEnd).forEach { skolems.add(it) }
-
-                subsumesInner(ty1, Polytype.fromMono(skolemized), skolems)
-            }
-            else ->
-                unify(ty1.type, ty2.type)
-        }
-
+        // Without higher-rank types this is very simple to implement
+        unify(instantiate(ty1), ty2.type)
     }
 
     private fun infer(expr: Expression): Monotype {
@@ -300,6 +273,7 @@ fun main() {
 type Maybe<a> { Nothing(), Just(a) }
 type Either<a, b> { Left(a), Right(b) }
 type List<a> { Cons(a, List<a>), Nil() }
+
 let fromMaybe : forall a. a -> Maybe<a> -> a =
   \def. \x. match x {
     Maybe::Just(x) -> x,
