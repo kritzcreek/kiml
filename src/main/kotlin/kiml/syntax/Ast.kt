@@ -110,8 +110,8 @@ sealed class Expression {
         }
 
         companion object {
-            public val int = Constructor(Name("Int"), listOf())
-            public val bool = Constructor(Name("Bool"), listOf())
+            val int = Constructor(Name("Int"), listOf())
+            val bool = Constructor(Name("Bool"), listOf())
         }
     }
 
@@ -122,8 +122,6 @@ sealed class Expression {
         } else {
             "forall ${vars.joinToString()}. ${type.pretty()}"
         }
-
-        fun isPoly(): Boolean = vars.isNotEmpty()
 
         companion object {
             fun fromMono(monotype: Monotype): Polytype = Polytype(emptyList(), monotype)
