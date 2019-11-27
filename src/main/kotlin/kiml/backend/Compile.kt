@@ -13,7 +13,6 @@ import asmble.io.ByteWriter
 import kiml.syntax.Expression
 import java.io.ByteArrayOutputStream
 import java.io.File
-import kotlin.reflect.jvm.internal.ReflectProperties
 
 fun gen(): Module {
     return Module(
@@ -36,7 +35,8 @@ fun gen(): Module {
 class Codegen {
     val globals: MutableList<Pair<String, Node.Global>> = mutableListOf()
     val types: MutableList<Pair<String, Node.Type.Func>> = mutableListOf()
-    val funcs: MutableList<Pair<String, Func>> = mutableListOf()
+    val global_funcs: MutableList<Pair<String, Func>> = mutableListOf()
+    val table_funcs: MutableList<String> = mutableListOf()
     var locals: MutableList<Pair<String, Value>> = mutableListOf()
 
     fun init_rts(): Pair<Int, Int> {
@@ -143,36 +143,27 @@ class Codegen {
         return mk_closure to apply_closure
     }
 
-    fun register_local(name: String, ty: Value): Int {
-        val res = this.locals.size
-        locals.add(name to ty)
-        return res
-    }
+    fun register_local(name: String, ty: Value): Int =
+        locals.size.also { locals.add(name to ty) }
 
-    fun register_func(name: String, func: Func): Int {
-        val res = this.funcs.size
-        funcs.add(name to func)
-        return res
-    }
+    fun register_global_func(name: String, func: Func): Int =
+        global_funcs.size.also { global_funcs.add(name to func) }
 
-    fun register_global(name: String, global: Node.Global): Int {
-        val res = this.globals.size
-        globals.add(name to global)
-        return res
-    }
+    fun register_table_func(name: String): Int =
+        table_funcs.size.also { table_funcs.add(name) }
 
-    fun register_type(name: String, typ: Node.Type.Func): Int {
-        val res = this.types.size
-        types.add(name to typ)
-        return res
-    }
+    fun register_global(name: String, global: Node.Global): Int =
+        globals.size.also { globals.add(name to global) }
+
+    fun register_type(name: String, typ: Node.Type.Func): Int =
+        types.size.also { types.add(name to typ) }
 
     private fun make_fn1(name: String, arg: Pair<String, Value>, body: (Int) -> List<Instr>): Int {
         locals = mutableListOf(arg)
         val instrs = body(0)
         val new_func = Func(Node.Type.Func(listOf(arg.second), Value.I32), locals.drop(1).map { it.second }, instrs)
         locals = mutableListOf()
-        return register_func(name, new_func)
+        return register_global_func(name, new_func)
     }
 
     private fun make_fn2(
@@ -186,24 +177,12 @@ class Codegen {
         val new_func =
             Func(Node.Type.Func(listOf(arg1.second, arg2.second), Value.I32), locals.drop(2).map { it.second }, instrs)
         locals = mutableListOf()
-        return register_func(name, new_func)
+        return register_global_func(name, new_func)
     }
 
-    fun func_index(name: String): Int = funcs.indexOfFirst { name == it.first }
-
-    fun compileExpression(expr: Expression): List<Instr> {
-        return when (expr) {
-            is Expression.Int -> listOf(Instr.I32Const(expr.int))
-            is Expression.Bool -> listOf(Instr.I32Const(if (expr.bool) 1 else 0))
-            is Expression.Var -> TODO()
-            is Expression.Lambda -> TODO()
-            is Expression.App -> TODO()
-            is Expression.Let -> TODO()
-            is Expression.LetRec -> TODO()
-            is Expression.If -> TODO()
-            is Expression.Construction -> TODO()
-            is Expression.Match -> TODO()
-        }
+    fun func_index(name: String): Int {
+        val res = global_funcs.indexOfFirst { name == it.first }
+        return if (res == -1) throw Exception("Failed to find function index for: $name") else res
     }
 
     fun compile_module(): Module {
@@ -235,11 +214,13 @@ class Codegen {
             )
         }
 
-        val main = register_func(
+        val code_pointer = register_table_func("my_add")
+
+        val main = register_global_func(
             "main", Func(
                 Node.Type.Func(listOf(), Value.I32), listOf(), listOf(
                     Instr.I32Const(2), // arity
-                    Instr.I32Const(0), // code pointer
+                    Instr.I32Const(code_pointer), // code pointer
                     Instr.Call(make_closure),
 
                     Instr.I32Const(10),
@@ -252,14 +233,12 @@ class Codegen {
         return Module(
             memories = listOf(Node.Type.Memory(Node.ResizableLimits(1, null))),
             globals = globals.map { it.second },
-            tables = listOf(Node.Type.Table(Node.ElemType.ANYFUNC, Node.ResizableLimits(1, null))),
-            elems = listOf(Node.Elem(0, listOf(Instr.I32Const(0)), listOf(my_add))),
-            exports = listOf(
-                Export("main", ExternalKind.FUNCTION, main)
-            ) + funcs.mapIndexed { ix, (name, _) ->
+            tables = listOf(Node.Type.Table(Node.ElemType.ANYFUNC, Node.ResizableLimits(table_funcs.size, null))),
+            elems = listOf(Node.Elem(0, listOf(Instr.I32Const(0)), table_funcs.map { func_index(it) })),
+            exports = global_funcs.mapIndexed { ix, (name, _) ->
                 Export(name, ExternalKind.FUNCTION, ix)
             },
-            funcs = funcs.map { it.second },
+            funcs = global_funcs.map { it.second },
             types = types.map { it.second }
         )
     }
