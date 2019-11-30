@@ -262,8 +262,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
             is Pattern.Var -> listOf(pattern.v to ty)
         }
     }
-
-
+    
     fun inferExpr(expr: Expression): Monotype = zonk(infer(expr)).also { println(checkState.substitution) }
 }
 

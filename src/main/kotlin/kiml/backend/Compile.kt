@@ -14,22 +14,14 @@ import kiml.syntax.Expression
 import java.io.ByteArrayOutputStream
 import java.io.File
 
-fun gen(): Module {
-    return Module(
-        startFuncIndex = 0,
-        funcs = listOf(
-            Func(
-                Node.Type.Func(emptyList(), Value.I32),
-                emptyList(),
-                listOf(
-                    Instr.I32Const(21),
-                    Instr.I32Const(21),
-                    Instr.I32Add
-                )
-            )
-        ),
-        exports = listOf(Export("main", ExternalKind.FUNCTION, 0))
-    )
+class Locals(vararg params: Value) {
+    private var list: MutableList<Value> = params.toMutableList()
+    private var nParams: Int = params.size
+
+    fun register(type: Value): Int = list.size.also { list.add(type) }
+
+    // All the locals the user registered
+    fun getLocals(): List<Value> = list.drop(nParams)
 }
 
 class Codegen {
@@ -37,12 +29,11 @@ class Codegen {
     val types: MutableList<Pair<String, Node.Type.Func>> = mutableListOf()
     val global_funcs: MutableList<Pair<String, Func>> = mutableListOf()
     val table_funcs: MutableList<String> = mutableListOf()
-    var locals: MutableList<Pair<String, Value>> = mutableListOf()
 
     fun init_rts(): Pair<Int, Int> {
         val watermark =
             register_global("watermark", Node.Global(Node.Type.Global(Value.I32, true), listOf(Instr.I32Const(0))))
-        val allocate = make_fn1("allocate", "bytes" to Value.I32) { bytes ->
+        val allocate = make_fn1("allocate", Value.I32) { _, bytes ->
             listOf(
                 Instr.GetGlobal(watermark),
                 Instr.GetGlobal(watermark),
@@ -52,8 +43,8 @@ class Codegen {
             )
         }
         val mk_closure =
-            make_fn2("make_closure", "arity" to Value.I32, "code_pointer" to Value.I32) { arity, code_pointer ->
-                val closure_start = register_local("closure_start", Value.I32)
+            make_fn2("make_closure", Value.I32, Value.I32) { locals, arity, code_pointer ->
+                val closure_start = locals.register(Value.I32)
                 listOf(
                     Instr.I32Const(4),
                     Instr.GetLocal(arity),
@@ -75,12 +66,12 @@ class Codegen {
             }
         val apply_closure = make_fn2(
             "apply_closure",
-            "closure_start" to Value.I32,
-            "argument" to Value.I32
-        ) { closure_start, argument ->
-            val arity = register_local("arity", Value.I32)
-            val applied = register_local("applied", Value.I32)
-            val code_pointer = register_local("code_pointer", Value.I32)
+            Value.I32,
+            Value.I32
+        ) { locals, closure_start, argument ->
+            val arity = locals.register(Value.I32)
+            val applied = locals.register(Value.I32)
+            val code_pointer = locals.register(Value.I32)
             listOf(
                 Instr.GetLocal(closure_start),
                 Instr.I32Load16S(1, 0),
@@ -143,9 +134,6 @@ class Codegen {
         return mk_closure to apply_closure
     }
 
-    fun register_local(name: String, ty: Value): Int =
-        locals.size.also { locals.add(name to ty) }
-
     fun register_global_func(name: String, func: Func): Int =
         global_funcs.size.also { global_funcs.add(name to func) }
 
@@ -158,25 +146,23 @@ class Codegen {
     fun register_type(name: String, typ: Node.Type.Func): Int =
         types.size.also { types.add(name to typ) }
 
-    private fun make_fn1(name: String, arg: Pair<String, Value>, body: (Int) -> List<Instr>): Int {
-        locals = mutableListOf(arg)
-        val instrs = body(0)
-        val new_func = Func(Node.Type.Func(listOf(arg.second), Value.I32), locals.drop(1).map { it.second }, instrs)
-        locals = mutableListOf()
+    private fun make_fn1(name: String, arg: Value, body: (Locals, Int) -> List<Instr>): Int {
+        val locals = Locals(arg)
+        val instrs = body(locals, 0)
+        val new_func = Func(Node.Type.Func(listOf(arg), Value.I32), locals.getLocals(), instrs)
         return register_global_func(name, new_func)
     }
 
     private fun make_fn2(
         name: String,
-        arg1: Pair<String, Value>,
-        arg2: Pair<String, Value>,
-        body: (Int, Int) -> List<Instr>
+        arg1: Value,
+        arg2: Value,
+        body: (Locals, Int, Int) -> List<Instr>
     ): Int {
-        locals = mutableListOf(arg1, arg2)
-        val instrs = body(0, 1)
+        val locals = Locals(arg1, arg2)
+        val instrs = body(locals, 0, 1)
         val new_func =
-            Func(Node.Type.Func(listOf(arg1.second, arg2.second), Value.I32), locals.drop(2).map { it.second }, instrs)
-        locals = mutableListOf()
+            Func(Node.Type.Func(listOf(arg1, arg2), Value.I32), locals.getLocals(), instrs)
         return register_global_func(name, new_func)
     }
 
@@ -187,7 +173,7 @@ class Codegen {
 
     fun compile_module(): Module {
         val (make_closure, apply_closure) = init_rts()
-        val add3 = make_fn1("add3", "x" to Value.I32) { x ->
+        val add3 = make_fn1("add3", Value.I32) { _, x ->
             listOf(
                 Instr.I32Const(3),
                 Instr.GetLocal(x),
@@ -195,9 +181,9 @@ class Codegen {
             )
         }
 
-        val my_add = make_fn1("my_add", "arg_pointer" to Value.I32) { arg_pointer ->
-            val x = register_local("x", Value.I32)
-            val y = register_local("y", Value.I32)
+        val my_add = make_fn1("my_add", Value.I32) { locals, arg_pointer ->
+            val x = locals.register(Value.I32)
+            val y = locals.register(Value.I32)
             listOf(
                 Instr.GetLocal(arg_pointer),
                 Instr.I32Load(2, 0),
@@ -235,9 +221,7 @@ class Codegen {
             globals = globals.map { it.second },
             tables = listOf(Node.Type.Table(Node.ElemType.ANYFUNC, Node.ResizableLimits(table_funcs.size, null))),
             elems = listOf(Node.Elem(0, listOf(Instr.I32Const(0)), table_funcs.map { func_index(it) })),
-            exports = global_funcs.mapIndexed { ix, (name, _) ->
-                Export(name, ExternalKind.FUNCTION, ix)
-            },
+            exports = global_funcs.mapIndexed { ix, (name, _) -> Export(name, ExternalKind.FUNCTION, ix) },
             funcs = global_funcs.map { it.second },
             types = types.map { it.second }
         )
