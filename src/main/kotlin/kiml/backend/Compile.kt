@@ -10,7 +10,10 @@ import asmble.ast.Node.Type.Value
 import asmble.io.AstToBinary
 import asmble.io.AstToSExpr
 import asmble.io.ByteWriter
-import kiml.syntax.Expression
+import kiml.frontend.Lexer
+import kiml.frontend.Parser
+import kiml.frontend.TypeInfo
+import kiml.frontend.TypeMap
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -30,7 +33,7 @@ class Codegen {
     val global_funcs: MutableList<Pair<String, Func>> = mutableListOf()
     val table_funcs: MutableList<String> = mutableListOf()
 
-    fun init_rts(): Pair<Int, Int> {
+    fun init_rts() {
         val watermark =
             register_global("watermark", Node.Global(Node.Type.Global(Value.I32, true), listOf(Instr.I32Const(0))))
         val allocate = make_fn1("allocate", Value.I32) { _, bytes ->
@@ -42,29 +45,29 @@ class Codegen {
                 Instr.SetGlobal(watermark)
             )
         }
-        val mk_closure =
-            make_fn2("make_closure", Value.I32, Value.I32) { locals, arity, code_pointer ->
-                val closure_start = locals.register(Value.I32)
-                listOf(
-                    Instr.I32Const(4),
-                    Instr.GetLocal(arity),
-                    Instr.I32Mul,
-                    Instr.I32Const(8), // arity + applied + code_pointer
-                    Instr.I32Add,
-                    Instr.Call(allocate),
-                    Instr.SetLocal(closure_start),
-                    Instr.GetLocal(closure_start),
-                    Instr.GetLocal(arity),
-                    Instr.I32Store16(1, 0),
-                    Instr.GetLocal(closure_start),
-                    Instr.I32Const(4),
-                    Instr.I32Add,
-                    Instr.GetLocal(code_pointer),
-                    Instr.I32Store(2, 0),
-                    Instr.GetLocal(closure_start)
-                )
-            }
-        val apply_closure = make_fn2(
+
+        make_fn2("make_closure", Value.I32, Value.I32) { locals, arity, code_pointer ->
+            val closure_start = locals.register(Value.I32)
+            listOf(
+                Instr.I32Const(4),
+                Instr.GetLocal(arity),
+                Instr.I32Mul,
+                Instr.I32Const(8), // arity + applied + code_pointer
+                Instr.I32Add,
+                Instr.Call(allocate),
+                Instr.SetLocal(closure_start),
+                Instr.GetLocal(closure_start),
+                Instr.GetLocal(arity),
+                Instr.I32Store16(1, 0),
+                Instr.GetLocal(closure_start),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.GetLocal(code_pointer),
+                Instr.I32Store(2, 0),
+                Instr.GetLocal(closure_start)
+            )
+        }
+        make_fn2(
             "apply_closure",
             Value.I32,
             Value.I32
@@ -131,7 +134,26 @@ class Codegen {
             )
         }
 
-        return mk_closure to apply_closure
+        val add_inner = make_fn2("add\$inner", Value.I32, Value.I32) { _, x, y ->
+            listOf(
+                Instr.GetLocal(x),
+                Instr.GetLocal(y),
+                Instr.I32Add
+            )
+        }
+
+        make_fn1("add", Value.I32) { _, arg_pointer ->
+            listOf(
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Load(2, 0),
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.I32Load(2, 0),
+                Instr.Call(add_inner)
+            )
+        }
+        register_table_func("add")
     }
 
     fun register_global_func(name: String, func: Func): Int =
@@ -166,56 +188,32 @@ class Codegen {
         return register_global_func(name, new_func)
     }
 
+    private fun make_fnN(
+        name: String,
+        args: List<Value>,
+        body: (Locals, List<Int>) -> List<Instr>
+    ): Int {
+        val locals = Locals(*args.toTypedArray())
+        val instrs = body(locals, args.indices.toList())
+        val new_func =
+            Func(Node.Type.Func(args, Value.I32), locals.getLocals(), instrs)
+        return register_global_func(name, new_func)
+    }
+
     fun func_index(name: String): Int {
         val res = global_funcs.indexOfFirst { name == it.first }
         return if (res == -1) throw Exception("Failed to find function index for: $name") else res
     }
 
-    fun compile_module(): Module {
-        val (make_closure, apply_closure) = init_rts()
-        val add3 = make_fn1("add3", Value.I32) { _, x ->
-            listOf(
-                Instr.I32Const(3),
-                Instr.GetLocal(x),
-                Instr.I32Add
-            )
+    fun table_func_index(name: String): Int {
+        val res = table_funcs.indexOfFirst { name == it }
+        return if (res == -1) throw Exception("Failed to find function index for: $name") else res
+    }
+
+    fun compile_prog(prog: List<IR.Declaration>): Module {
+        prog.forEach { decl ->
+            compile_decl(decl)
         }
-
-        val my_add = make_fn1("my_add", Value.I32) { locals, arg_pointer ->
-            val x = locals.register(Value.I32)
-            val y = locals.register(Value.I32)
-            listOf(
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Load(2, 0),
-                Instr.SetLocal(x),
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
-                Instr.SetLocal(y),
-
-                Instr.GetLocal(x),
-                Instr.GetLocal(y),
-                Instr.I32Add
-            )
-        }
-
-        val code_pointer = register_table_func("my_add")
-
-        val main = register_global_func(
-            "main", Func(
-                Node.Type.Func(listOf(), Value.I32), listOf(), listOf(
-                    Instr.I32Const(2), // arity
-                    Instr.I32Const(code_pointer), // code pointer
-                    Instr.Call(make_closure),
-
-                    Instr.I32Const(10),
-                    Instr.Call(apply_closure),
-                    Instr.I32Const(20),
-                    Instr.Call(apply_closure)
-                )
-            )
-        )
         return Module(
             memories = listOf(Node.Type.Memory(Node.ResizableLimits(1, null))),
             globals = globals.map { it.second },
@@ -226,11 +224,96 @@ class Codegen {
             types = types.map { it.second }
         )
     }
+
+    fun compile_decl(decl: IR.Declaration) {
+        val arity = decl.arguments.size
+        val inner = make_fnN(decl.name.v + "\$inner", decl.arguments.map { Value.I32 }) { locals, params ->
+            compile_expr(locals, decl.body.instantiate(params.map { IR.Expression.GetLocal(it) }))
+        }
+        make_fn1(decl.name.v, Value.I32) { locals, arg_pointer ->
+            val instrs = mutableListOf<Instr>()
+            for (i in 0 until arity) {
+                instrs.addAll(
+                    listOf(
+                        Instr.GetLocal(arg_pointer),
+                        Instr.I32Const(4 * i),
+                        Instr.I32Add,
+                        Instr.I32Load(2, 0)
+                    )
+                )
+            }
+            instrs.add(Instr.Call(inner))
+            instrs
+        }
+        register_table_func(decl.name.v)
+
+    }
+
+    private fun compile_expr(locals: Locals, expr: IR.Expression): List<Instr> {
+        return when (expr) {
+            is IR.Expression.Int -> listOf(Instr.I32Const(expr.int))
+            is IR.Expression.Bool -> listOf(Instr.I32Const(if (expr.bool) 1 else 0))
+            is IR.Expression.Var -> when (expr.name) {
+                is LNName.Bound -> throw Exception("Should've been instantiated: ${expr.name}")
+                is LNName.Free -> {
+                    val arity = global_funcs[func_index(expr.name.v.v + "\$inner")]
+                        .second
+                        .type
+                        .params
+                        .size
+                    listOf<Instr>(
+                        Instr.I32Const(arity),
+                        Instr.I32Const(table_func_index(expr.name.v.v)),
+                        Instr.Call(func_index("make_closure"))
+                    )
+                }
+            }
+            is IR.Expression.Application ->
+                compile_expr(locals, expr.func) +
+                        compile_expr(locals, expr.argument) +
+                        listOf(Instr.Call(func_index("apply_closure")))
+            is IR.Expression.Pack -> TODO()
+            is IR.Expression.Match -> TODO()
+            is IR.Expression.If ->
+                compile_expr(locals, expr.condition) +
+                        listOf(Instr.If(Value.I32)) +
+                        compile_expr(locals, expr.thenCase) +
+                        listOf(Instr.Else) +
+                        compile_expr(locals, expr.elseCase) +
+                        listOf(Instr.End)
+            is IR.Expression.Let -> {
+                val binder = locals.register(Value.I32)
+                val body = expr.body.instantiate(listOf(IR.Expression.GetLocal(binder)))
+                compile_expr(locals, expr.expr) +
+                        listOf(Instr.SetLocal(binder)) +
+                        compile_expr(locals, body)
+            }
+            // is IR.Expression.MakeClosure -> TODO()
+            is IR.Expression.GetLocal -> listOf(Instr.GetLocal(expr.ix))
+        }
+    }
 }
 
 
 fun main(): Unit {
-    val mod = Codegen().compile_module()
+    val input =
+        """
+let y = 4 in
+let f = \x. add x y in
+f 10
+"""
+    val (tys, expr) = Parser(Lexer(input)).parseInput()
+
+    val typeMap = TypeMap(HashMap())
+    tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }
+
+    val lowering = Lowering(typeMap)
+    val prog = lowering.lowerProg(expr)
+    prog.forEach { decl -> println(decl)}
+
+    val codegen = Codegen()
+    codegen.init_rts()
+    val mod = codegen.compile_prog(prog)
     val ast = AstToSExpr().fromModule(mod)
 
     println(ast)
