@@ -2,6 +2,7 @@ package kiml.backend
 
 import kiml.frontend.*
 import kiml.syntax.*
+import pretty.*
 
 sealed class LNName<A> {
     data class Free<A>(val v: A) : LNName<A>()
@@ -10,6 +11,19 @@ sealed class LNName<A> {
     data class Index(val depth: Int, val breadth: Int) {
         fun shift(): Index = this.copy(depth = depth + 1)
     }
+
+    fun show(): Doc<Nothing> =
+        when (this) {
+            is Free -> v.toString().text()
+            is Bound -> lAngle<Nothing>() +
+                    ix.depth.toString().text() +
+                    if (ix.breadth != 0) {
+                        comma<Nothing>() + space() +
+                                ix.breadth.toString().text() + rAngle()
+                    } else {
+                        rAngle()
+                    }
+        }
 }
 
 
@@ -29,7 +43,7 @@ sealed class IR {
         ) : Expression()
 
         // data class MakeClosure(val name: Name, val env: List<LNName.Bound<Name>>) : Expression()
-        data class GetLocal(val ix: kotlin.Int): Expression()
+        data class GetLocal(val ix: kotlin.Int) : Expression()
 
         fun instantiate(replacements: List<Expression>): Expression =
             instantiateInner(0, replacements)
@@ -69,6 +83,25 @@ sealed class IR {
                 )
             }
         }
+
+
+        fun show(): Doc<Nothing> {
+            return when (this) {
+                is Int -> int.toString().text()
+                is Bool -> bool.toString().text()
+                is Var -> name.show()
+                is Application -> func.show() + space() + argument.show()
+//                is Pack -> TODO()
+//                is Match -> TODO()
+//                is If -> TODO()
+                is Let ->
+                    "let".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+                            expr.show() + space() + "in".text() + line() +
+                            body.show()
+                is GetLocal -> "GetLocal($ix)".text()
+                else -> this.toString().text()
+            }
+        }
     }
 
     data class Case(val tag: Int, val binders: List<Name>, val body: Expression) {
@@ -80,7 +113,21 @@ sealed class IR {
         val name: Name,
         val arguments: List<Name/* add Type here*/>,
         val body: Expression
-    )
+    ) {
+        fun show(): Doc<Nothing> {
+            val header = ("fun".text<Nothing>() + space() +
+                    name.v.text() +
+                    arguments
+                        .map { it.v.text<Nothing>() }
+                        .encloseSep(lParen(), rParen(), comma<Nothing>() + space())).group()
+            val doc = (header + space() + lBrace() + line() + body.show()).nest(2) + line() + rBrace()
+            return doc
+        }
+
+        fun pretty(): String {
+            return show().pretty(90, 0.4F)
+        }
+    }
 }
 
 class Lowering(val typeMap: TypeMap) {
@@ -235,11 +282,14 @@ let y = 4 in
 let f = \x. add x y in
 f 10
 """
-    val (tys, expr) = Parser(Lexer(input)).parseInput()
+    val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
     val typeMap = TypeMap(HashMap())
     tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }
 
     val lowering = Lowering(typeMap)
-    println(lowering.lowerProg(expr))
+    val prog = lowering.lowerProg(expr)
+    prog.forEach {
+        println(it.pretty())
+    }
 }

@@ -14,6 +14,7 @@ import kiml.frontend.Lexer
 import kiml.frontend.Parser
 import kiml.frontend.TypeInfo
 import kiml.frontend.TypeMap
+import pretty.pretty
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -92,10 +93,10 @@ class Codegen {
                 Instr.I32Load(2, 0),
                 Instr.SetLocal(code_pointer),
 
-                Instr.I32Const(8),
                 Instr.I32Const(4),
                 Instr.GetLocal(applied),
                 Instr.I32Mul,
+                Instr.I32Const(8),
                 Instr.I32Add,
                 Instr.GetLocal(argument),
                 Instr.I32Store(2, 0),
@@ -230,7 +231,7 @@ class Codegen {
         val inner = make_fnN(decl.name.v + "\$inner", decl.arguments.map { Value.I32 }) { locals, params ->
             compile_expr(locals, decl.body.instantiate(params.map { IR.Expression.GetLocal(it) }))
         }
-        make_fn1(decl.name.v, Value.I32) { locals, arg_pointer ->
+        make_fn1(decl.name.v, Value.I32) { _, arg_pointer ->
             val instrs = mutableListOf<Instr>()
             for (i in 0 until arity) {
                 instrs.addAll(
@@ -284,6 +285,7 @@ class Codegen {
             is IR.Expression.Let -> {
                 val binder = locals.register(Value.I32)
                 val body = expr.body.instantiate(listOf(IR.Expression.GetLocal(binder)))
+                println(body.show().pretty(90, 0.4F))
                 compile_expr(locals, expr.expr) +
                         listOf(Instr.SetLocal(binder)) +
                         compile_expr(locals, body)
@@ -309,7 +311,7 @@ f 10
 
     val lowering = Lowering(typeMap)
     val prog = lowering.lowerProg(expr)
-    prog.forEach { decl -> println(decl)}
+    prog.forEach { decl -> println(decl.pretty())}
 
     val codegen = Codegen()
     codegen.init_rts()
