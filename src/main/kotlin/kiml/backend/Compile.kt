@@ -93,10 +93,13 @@ class Codegen {
                 Instr.I32Load(2, 0),
                 Instr.SetLocal(code_pointer),
 
+                // Write the argument
                 Instr.I32Const(4),
                 Instr.GetLocal(applied),
                 Instr.I32Mul,
                 Instr.I32Const(8),
+                Instr.I32Add,
+                Instr.GetLocal(closure_start),
                 Instr.I32Add,
                 Instr.GetLocal(argument),
                 Instr.I32Store(2, 0),
