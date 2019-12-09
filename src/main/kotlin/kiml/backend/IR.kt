@@ -89,10 +89,12 @@ sealed class IR {
                 is Int -> int.toString().text()
                 is Bool -> bool.toString().text()
                 is Var -> name.show()
-                is Application -> func.show() + space() + argument.show()
+                is Application -> func.show() + space() + argument.show().enclose(lParen(), rParen())
 //                is Pack -> TODO()
 //                is Match -> TODO()
-//                is If -> TODO()
+                is If -> "if".text<Nothing>() + space() + condition.show() + space() + "then".text() +
+                        space() + thenCase.show() +
+                        space() + "else".text() + space() + elseCase.show()
                 is Let ->
                     "let".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
                             expr.show() + space() + "in".text() + line() +
@@ -152,7 +154,7 @@ class Lowering(val typeMap: TypeMap) {
             )
             is Expression.Lambda -> {
                 val closureName = freshName("lifted")
-                val (arguments, closureBody) = expr.foldArguments()
+                val (arguments, body) = expr.foldArguments()
                 val freeVars =
                     // We only keep non top-level bound names
                     expr
@@ -169,7 +171,7 @@ class Lowering(val typeMap: TypeMap) {
                     IR.Declaration(
                         closureName,
                         allArguments,
-                        lowerExpr(closureBody, tmpEnv)
+                        lowerExpr(body, tmpEnv)
                     )
                 liftedDeclarations.add(liftedDecl)
                 val fn: IR.Expression = IR.Expression.Var(LNName.Free(closureName))
@@ -195,14 +197,46 @@ class Lowering(val typeMap: TypeMap) {
                 if (expr.expr !is Expression.Lambda) {
                     throw Exception("Only functions can be defined recursively!")
                 }
-                TODO("Recursive lets")
+                val lambda = expr.expr
+                val closureName = freshName("lifted")
+                val (arguments, body) = lambda.foldArguments()
+                val freeVars =
+                    // We only keep non top-level bound names (and the recursive binder also isn't free)
+                    lambda
+                        .freeVars()
+                        .toList()
+                        .mapNotNull {
+                            if (it == expr.binder) null
+                            else env[it]?.let { index -> it to LNName.Bound<Name>(index) }
+                        }
+                val allArguments = freeVars.map { it.first } + arguments
+                val tmpEnv = HashMap<Name, LNName.Index>()
+                allArguments.forEachIndexed { ix, arg ->
+                    tmpEnv[arg] = LNName.Index(0, ix)
+                    tmpEnv[expr.binder] = LNName.Index(-1, 0)
+                }
 
-                // 1. Codegen the lifted definition
-                // Question: How do you make sure you only build the environment once? Do you rebuild it on every recursive call?
-                // I don't think there's anything better we can do than just repassing the env on every call,
-                // since WASM doesn't allow nested function definitions
-                // 2. instantiate all recursive occurences
+                val liftedFn: IR.Expression = IR.Expression.Var(LNName.Free(closureName))
+                val fn = freeVars.fold(liftedFn) { acc, (_, bound) ->
+                    IR.Expression.Application(acc, IR.Expression.Var(bound))
+                }
 
+                val liftedDecl =
+                    IR.Declaration(
+                        closureName,
+                        allArguments,
+                        lowerExpr(body, tmpEnv).instantiateInner(-1, listOf(fn))
+                    )
+                liftedDeclarations.add(liftedDecl)
+
+                val tmpEnv2 = HashMap<Name, LNName.Index>()
+                env.mapValuesTo(tmpEnv) { it.value.shift() }
+                tmpEnv2[expr.binder] = LNName.Index(0, 0)
+                IR.Expression.Let(
+                    binder = LNName.Free(expr.binder),
+                    expr = fn,
+                    body = lowerExpr(expr.body, tmpEnv2)
+                )
             }
             is Expression.If -> IR.Expression.If(
                 lowerExpr(expr.condition, env),

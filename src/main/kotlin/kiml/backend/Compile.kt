@@ -14,7 +14,6 @@ import kiml.frontend.Lexer
 import kiml.frontend.Parser
 import kiml.frontend.TypeInfo
 import kiml.frontend.TypeMap
-import pretty.pretty
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -48,7 +47,7 @@ class Codegen {
         }
 
         make_fn2("make_closure", Value.I32, Value.I32) { locals, arity, code_pointer ->
-            val closure_start = locals.register(Value.I32)
+            val closureStart = locals.register(Value.I32)
             listOf(
                 Instr.I32Const(4),
                 Instr.GetLocal(arity),
@@ -56,16 +55,15 @@ class Codegen {
                 Instr.I32Const(8), // arity + applied + code_pointer
                 Instr.I32Add,
                 Instr.Call(allocate),
-                Instr.SetLocal(closure_start),
-                Instr.GetLocal(closure_start),
+                Instr.TeeLocal(closureStart),
                 Instr.GetLocal(arity),
                 Instr.I32Store16(1, 0),
-                Instr.GetLocal(closure_start),
+                Instr.GetLocal(closureStart),
                 Instr.I32Const(4),
                 Instr.I32Add,
                 Instr.GetLocal(code_pointer),
                 Instr.I32Store(2, 0),
-                Instr.GetLocal(closure_start)
+                Instr.GetLocal(closureStart)
             )
         }
         make_fn2(
@@ -75,7 +73,7 @@ class Codegen {
         ) { locals, closure_start, argument ->
             val arity = locals.register(Value.I32)
             val applied = locals.register(Value.I32)
-            val code_pointer = locals.register(Value.I32)
+            val codePointer = locals.register(Value.I32)
             listOf(
                 Instr.GetLocal(closure_start),
                 Instr.I32Load16S(1, 0),
@@ -91,7 +89,7 @@ class Codegen {
                 Instr.I32Const(4),
                 Instr.I32Add,
                 Instr.I32Load(2, 0),
-                Instr.SetLocal(code_pointer),
+                Instr.SetLocal(codePointer),
 
                 // Write the argument
                 Instr.I32Const(4),
@@ -129,20 +127,12 @@ class Codegen {
                 Instr.I32Const(8),
                 Instr.I32Add,
 
-                Instr.GetLocal(code_pointer),
+                Instr.GetLocal(codePointer),
                 Instr.CallIndirect(
                     register_type("int_to_int", Node.Type.Func(listOf(Value.I32), Value.I32)),
                     false
                 ),
                 Instr.End
-            )
-        }
-
-        val add_inner = make_fn2("add\$inner", Value.I32, Value.I32) { _, x, y ->
-            listOf(
-                Instr.GetLocal(x),
-                Instr.GetLocal(y),
-                Instr.I32Add
             )
         }
 
@@ -154,14 +144,50 @@ class Codegen {
                 Instr.I32Const(4),
                 Instr.I32Add,
                 Instr.I32Load(2, 0),
-                Instr.Call(add_inner)
+                Instr.I32Add
             )
         }
         register_table_func("add")
+        make_fn1("eq_int", Value.I32) { _, arg_pointer ->
+            listOf(
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Load(2, 0),
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.I32Load(2, 0),
+                Instr.I32Eq
+            )
+        }
+        register_table_func("eq_int")
+        make_fn1("sub", Value.I32) { _, arg_pointer ->
+            listOf(
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Load(2, 0),
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.I32Load(2, 0),
+                Instr.I32Sub
+            )
+        }
+        register_table_func("sub")
     }
 
+    fun get_arity(funcName: String): Int =
+        when (funcName) {
+            "add" -> 2
+            "sub" -> 2
+            "eq_int" -> 2
+            else -> global_funcs[func_index("$funcName\$inner")]
+                .second
+                .type
+                .params
+                .size
+        }
+
     fun register_global_func(name: String, func: Func): Int =
-        global_funcs.size.also { global_funcs.add(name to func) }
+        global_funcs.size.also { global_funcs += name to func }
 
     fun register_table_func(name: String): Int =
         table_funcs.size.also { table_funcs.add(name) }
@@ -172,11 +198,16 @@ class Codegen {
     fun register_type(name: String, typ: Node.Type.Func): Int =
         types.size.also { types.add(name to typ) }
 
+    private fun dummyFunc(arity: Int) =
+        Func(Node.Type.Func((0 until arity).map { Value.I32 }, null), listOf(), listOf(Instr.Unreachable))
+
     private fun make_fn1(name: String, arg: Value, body: (Locals, Int) -> List<Instr>): Int {
+        val self = register_global_func(name, dummyFunc(1))
         val locals = Locals(arg)
         val instrs = body(locals, 0)
         val new_func = Func(Node.Type.Func(listOf(arg), Value.I32), locals.getLocals(), instrs)
-        return register_global_func(name, new_func)
+        global_funcs[self] = name to new_func
+        return self
     }
 
     private fun make_fn2(
@@ -185,11 +216,13 @@ class Codegen {
         arg2: Value,
         body: (Locals, Int, Int) -> List<Instr>
     ): Int {
+        val self = register_global_func(name, dummyFunc(2))
         val locals = Locals(arg1, arg2)
         val instrs = body(locals, 0, 1)
         val new_func =
             Func(Node.Type.Func(listOf(arg1, arg2), Value.I32), locals.getLocals(), instrs)
-        return register_global_func(name, new_func)
+        global_funcs[self] = name to new_func
+        return self
     }
 
     private fun make_fnN(
@@ -197,11 +230,13 @@ class Codegen {
         args: List<Value>,
         body: (Locals, List<Int>) -> List<Instr>
     ): Int {
+        val self = register_global_func(name, dummyFunc(args.size))
         val locals = Locals(*args.toTypedArray())
         val instrs = body(locals, args.indices.toList())
         val new_func =
             Func(Node.Type.Func(args, Value.I32), locals.getLocals(), instrs)
-        return register_global_func(name, new_func)
+        global_funcs[self] = name to new_func
+        return self
     }
 
     fun func_index(name: String): Int {
@@ -231,7 +266,11 @@ class Codegen {
 
     fun compile_decl(decl: IR.Declaration) {
         val arity = decl.arguments.size
+        println("Compiling Decl: ${decl.name.v} @ $arity")
+        register_table_func(decl.name.v)
+
         val inner = make_fnN(decl.name.v + "\$inner", decl.arguments.map { Value.I32 }) { locals, params ->
+            println("${decl.pretty()} => $params")
             compile_expr(locals, decl.body.instantiate(params.map { IR.Expression.GetLocal(it) }))
         }
         make_fn1(decl.name.v, Value.I32) { _, arg_pointer ->
@@ -249,7 +288,6 @@ class Codegen {
             instrs.add(Instr.Call(inner))
             instrs
         }
-        register_table_func(decl.name.v)
 
     }
 
@@ -260,11 +298,7 @@ class Codegen {
             is IR.Expression.Var -> when (expr.name) {
                 is LNName.Bound -> throw Exception("Should've been instantiated: ${expr.name}")
                 is LNName.Free -> {
-                    val arity = global_funcs[func_index(expr.name.v.v + "\$inner")]
-                        .second
-                        .type
-                        .params
-                        .size
+                    val arity = get_arity(expr.name.v.v)
                     listOf<Instr>(
                         Instr.I32Const(arity),
                         Instr.I32Const(table_func_index(expr.name.v.v)),
@@ -302,9 +336,9 @@ class Codegen {
 fun main(): Unit {
     val input =
         """
-let y = 4 in
-let f = \x. add x y in
-f 10
+let y = 1 in
+let rec sum = \x. if eq_int x y then 1 else add x (sum (sub x y)) in
+sum 5
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
 
@@ -313,7 +347,7 @@ f 10
 
     val lowering = Lowering(typeMap)
     val prog = lowering.lowerProg(expr)
-    prog.forEach { decl -> println(decl.pretty())}
+    prog.forEach { decl -> println(decl.pretty()) }
 
     val codegen = Codegen()
     codegen.init_rts()

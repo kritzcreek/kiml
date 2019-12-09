@@ -45,7 +45,7 @@ data class CheckState(
     var environment: Environment = {
         val res = Environment()
         res.insertMono(Name("isEven"), Monotype.Function(Monotype.int, Monotype.bool))
-        res.insertMono(Name("eq"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.bool))))
+        res.insertMono(Name("eq_int"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.bool))))
         res.insertMono(Name("mul"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
         res.insertMono(Name("sub"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
         res
