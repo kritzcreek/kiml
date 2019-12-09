@@ -42,7 +42,6 @@ sealed class IR {
             val body: Expression
         ) : Expression()
 
-        // data class MakeClosure(val name: Name, val env: List<LNName.Bound<Name>>) : Expression()
         data class GetLocal(val ix: kotlin.Int) : Expression()
 
         fun instantiate(replacements: List<Expression>): Expression =
@@ -133,9 +132,6 @@ sealed class IR {
 class Lowering(val typeMap: TypeMap) {
     var freshSupply: Int = 0
     val liftedDeclarations = mutableListOf<IR.Declaration>()
-
-    // Write this as a getter?
-    fun toplevels(): List<Name> = liftedDeclarations.map { it.name }
 
     fun freshName(name: String): Name {
         return Name("$${name}_${freshSupply++}")

@@ -288,7 +288,6 @@ class Codegen {
             is IR.Expression.Let -> {
                 val binder = locals.register(Value.I32)
                 val body = expr.body.instantiate(listOf(IR.Expression.GetLocal(binder)))
-                println(body.show().pretty(90, 0.4F))
                 compile_expr(locals, expr.expr) +
                         listOf(Instr.SetLocal(binder)) +
                         compile_expr(locals, body)
