@@ -1,12 +1,17 @@
 package kiml.syntax
 
+import asmble.util.add
+import kiml.backend.IR
+import pretty.*
+import kotlin.math.exp
+
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
     data class Bool(val bool: Boolean) : Expression()
     data class Var(val name: Name) : Expression()
     data class Lambda(val binder: Name, val body: Expression) : Expression() {
         fun foldArguments(): Pair<List<Name>, Expression> {
-            return when(body) {
+            return when (body) {
                 is Lambda -> {
                     val (innerArgs, closureBody) = body.foldArguments()
                     listOf(binder) + innerArgs to closureBody
@@ -16,25 +21,83 @@ sealed class Expression {
         }
     }
 
-    data class App(val function: Expression, val argument: Expression) : Expression()
+    data class App(val function: Expression, val argument: Expression) : Expression() {
+        fun unfoldApps(): Pair<Expression, List<Expression>> {
+            return if (function is App) {
+                val (func, args) = function.unfoldApps()
+                func to args + listOf(argument)
+            } else {
+                function to listOf(argument)
+            }
+        }
+    }
+
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
     data class Construction(val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
-    fun pretty(): String = when (this) {
-        is Int -> "$int"
-        is Bool -> "$bool"
-        is Var -> this.name.v
-        is Lambda -> "(\\${this.binder} -> ${this.body.pretty()})"
-        is App -> "(${this.function.pretty()}) ${this.argument.pretty()}"
-        is Let -> "(let $binder ${type?.let { ": ${it.pretty()}" } ?: ""} = ${expr.pretty()} in ${body.pretty()})"
-        is LetRec -> "(let rec $binder ${type?.let { ": ${it.pretty()}" }
-            ?: ""} = ${expr.pretty()} in ${body.pretty()})"
-        is If -> "(if ${condition.pretty()} then ${thenCase.pretty()} else ${elseCase.pretty()})"
-        is Construction -> "${ty}::${dtor}(${fields.joinToString(", ") { it.pretty() }})"
-        is Match -> "match ${expr.pretty()} { ${cases.joinToString(", ") { it.pretty() }} }"
+//    fun pretty(): String = when (this) {
+//        is Int -> "$int"
+//        is Bool -> "$bool"
+//        is Var -> this.name.v
+//        is Lambda -> "(\\${this.binder} -> ${this.body.pretty()})"
+//        is App -> "(${this.function.pretty()}) ${this.argument.pretty()}"
+//        is Let -> "(let $binder ${type?.let { ": ${it.pretty()}" } ?: ""} = ${expr.pretty()} in ${body.pretty()})"
+//        is LetRec -> "(let rec $binder ${type?.let { ": ${it.pretty()}" }
+//            ?: ""} = ${expr.pretty()} in ${body.pretty()})"
+//        is If -> "(if ${condition.pretty()} then ${thenCase.pretty()} else ${elseCase.pretty()})"
+//        is Construction -> "${ty}::${dtor}(${fields.joinToString(", ") { it.pretty() }})"
+//        is Match -> "match ${expr.pretty()} { ${cases.joinToString(", ") { it.pretty() }} }"
+//    }
+
+    fun pretty(): String {
+        return show().pretty(60, 0.4F)
+    }
+
+    fun show(): Doc<Nothing> = showInner(0)
+
+    fun showInner(depth: kotlin.Int): Doc<Nothing> = when (this) {
+        is Int -> int.toString().text()
+        is Bool -> bool.toString().text()
+        is Var -> name.show()
+        is Lambda -> {
+            var res = (("\\".text<Nothing>() + binder.show() + dot()).group() + space() + body.show()).group().nest(2)
+            if (depth > 0) res = res.enclose(lParen(), rParen())
+            res
+        }
+        is App -> {
+            val (func, args) = unfoldApps()
+            var res = ((listOf(func) + args).map { it.showInner(1) }).sep().group().nest(2)
+            if (depth > 0) res = res.enclose(lParen(), rParen())
+            res
+        }
+        is Let ->
+            "let".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+                    expr.show() + space() + "in".text() + line() +
+                    body.show()
+        is LetRec ->
+            "letrec".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+                    expr.show() + space() + "in".text() + line() +
+                    body.show()
+        is If -> (("if".text<Nothing>() + space() + condition.show() + space() + "then".text()).group() +
+                space() + thenCase.show()).group().nest(2) +
+                space() + ("else".text<Nothing>() + space() + elseCase.show()).group().nest(2)
+        is Construction -> {
+            val dt = ty.show() + "::".text() + dtor.show() + lParen()
+            val fs = fields.fold(nil<Nothing>()) { acc, it -> acc + it.show() + comma() + softLine() }
+            dt + fs.nest(2) + rParen()
+        }
+        is Match -> {
+            val header = "match".text<Nothing>() + space() + expr.show() + space() + lBrace()
+            val showCase = { case: Case ->
+                case.pattern.show() + space() + "=>".text() + space() + (line<Nothing>() +
+                        case.expr.show()).nest(2)
+            }
+            val myCases = cases.fold(nil<Nothing>()) { acc, it -> acc + showCase(it) + comma() + line() }
+            header.group() + (line<Nothing>() + myCases).nest(2) + rBrace()
+        }
     }
 
     fun freeVars(): HashSet<Name> {
@@ -97,6 +160,17 @@ sealed class Pattern {
             is Var -> hashSetOf(v)
         }
     }
+
+    fun show(): Doc<Nothing> {
+        return when (this) {
+            is Constructor -> ty.show() + "::".text() + dtor.show() + fields.map { it.show() }.encloseSep(
+                lParen(),
+                rParen(),
+                comma()
+            )
+            is Var -> v.show()
+        }
+    }
 }
 
 
@@ -106,6 +180,7 @@ inline class TyVar(val v: String) {
 
 inline class Name(val v: String) {
     override fun toString(): String = v
+    fun show(): Doc<Nothing> = v.text()
 }
 
 data class TypeDeclaration(
@@ -134,6 +209,7 @@ sealed class Monotype {
             is Function -> "(${this.argument.pretty()} -> ${this.result.pretty()})"
         }
     }
+
 
     private fun unknownsInner(acc: HashSet<Int>) {
         when (this) {
@@ -185,4 +261,15 @@ data class Polytype(val vars: List<TyVar>, val type: Monotype) {
     companion object {
         fun fromMono(monotype: Monotype): Polytype = Polytype(emptyList(), monotype)
     }
+}
+
+fun main() {
+    println(
+        Expression.App(
+            Expression.App(
+                Expression.App(Expression.Var(Name("x")), Expression.Var(Name("y"))),
+                Expression.Var(Name("z"))
+            ), Expression.Var(Name("v"))
+        ).pretty()
+    )
 }
