@@ -280,4 +280,8 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
             return Spanned(span, it)
         } ?: throw RuntimeException(error(Spanned(span, token)))
     }
+
+    companion object {
+        fun parseType(input: String): Polytype = Parser(Lexer(input)).parsePolytype()
+    }
 }

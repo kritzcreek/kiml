@@ -28,9 +28,12 @@ data class Environment(val env: HashMap<Name, Polytype> = hashMapOf()) {
         return res
     }
 
-    fun insertMono(name: Name, ty: Monotype) {
-        env[name] = Polytype(listOf(), ty)
+    operator fun set(name: Name, type: Polytype) {
+        env[name] = type
     }
+
+    operator fun get(name: Name): Polytype? = env[name]
+
 }
 
 data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<DataConstructor>) {
@@ -42,33 +45,42 @@ data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<DataConstruc
 data class TypeMap(val tm: HashMap<Name, TypeInfo>)
 
 data class CheckState(
-    var environment: Environment = {
-        val res = Environment()
-        res.insertMono(Name("isEven"), Monotype.Function(Monotype.int, Monotype.bool))
-        res.insertMono(Name("eq_int"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.bool))))
-        res.insertMono(Name("mul"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
-        res.insertMono(Name("sub"), Monotype.Function(Monotype.int, (Monotype.Function(Monotype.int, Monotype.int))))
-        res
-    }(),
+    var environment: Environment,
+    val typeMap: TypeMap,
     val substitution: Substitution = Substitution(HashMap()),
-    val typeMap: TypeMap = TypeMap(
-        hashMapOf(
-            Name("Int") to TypeInfo.empty,
-            Name("Bool") to TypeInfo.empty
-        )
-    ),
     var fresh_supply: Int = 0
-)
+) {
+    companion object {
+        fun initial(): CheckState {
+            val env = Environment()
+            listOf(
+                "isEven" to "Int -> Bool",
+                "eq_int" to "Int -> Int -> Bool",
+                "add" to "Int -> Int -> Int",
+                "mul" to "Int -> Int -> Int",
+                "sub" to "Int -> Int -> Int"
+            ).forEach { (name, ty) ->
+                env[Name(name)] = Parser.parseType(ty)
+            }
+            val tyMap = TypeMap(
+                hashMapOf(
+                    Name("Int") to TypeInfo.empty,
+                    Name("Bool") to TypeInfo.empty
+                )
+            )
+            return CheckState(env, tyMap)
+        }
+    }
+}
 
-class TypeChecker {
-    private val checkState = CheckState()
+class TypeChecker(val checkState: CheckState) {
 
     private fun freshUnknown(): Monotype = Monotype.Unknown(++checkState.fresh_supply)
 
     private fun zonk(ty: Monotype): Monotype = checkState.substitution.apply(ty)
 
     private fun lookupName(v: Name): Monotype =
-        checkState.environment.env[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
+        checkState.environment[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
 
     fun addType(tyDecl: TypeDeclaration) {
         checkState.typeMap.tm.put(tyDecl.name, TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors))
@@ -126,15 +138,10 @@ class TypeChecker {
     private fun <A> bindName(v: Name, ty: Polytype, action: () -> A): A =
         bindNames(listOf(v to ty), action)
 
-    private fun occursCheck(u: Int, ty: Monotype) {
-        if (ty is Monotype.Unknown) return
+    private fun solveType(u: Int, ty: Monotype) {
         if (ty.unknowns().contains(u)) {
             throw Exception("Occurs check failed for u$u and ${zonk(ty).pretty()}")
         }
-    }
-
-    private fun solveType(u: Int, ty: Monotype) {
-        occursCheck(u, ty)
         checkState.substitution.subst[u] = ty
     }
 
@@ -262,7 +269,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
             is Pattern.Var -> listOf(pattern.v to ty)
         }
     }
-    
+
     fun inferExpr(expr: Expression): Monotype = zonk(infer(expr)).also { println(checkState.substitution) }
 }
 
@@ -286,7 +293,7 @@ let rec map : forall a b. (a -> b) -> List<a> -> List<b> =
 map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
-    val tc = TypeChecker()
+    val tc = TypeChecker(CheckState.initial())
     tys.forEach { tc.addType(it) }
     println("${expr.pretty()} : ")
     println("   ${tc.inferExpr(expr).pretty()}")

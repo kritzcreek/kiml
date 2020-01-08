@@ -1,9 +1,6 @@
 package kiml.syntax
 
-import asmble.util.add
-import kiml.backend.IR
 import pretty.*
-import kotlin.math.exp
 
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
@@ -38,23 +35,7 @@ sealed class Expression {
     data class Construction(val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
-//    fun pretty(): String = when (this) {
-//        is Int -> "$int"
-//        is Bool -> "$bool"
-//        is Var -> this.name.v
-//        is Lambda -> "(\\${this.binder} -> ${this.body.pretty()})"
-//        is App -> "(${this.function.pretty()}) ${this.argument.pretty()}"
-//        is Let -> "(let $binder ${type?.let { ": ${it.pretty()}" } ?: ""} = ${expr.pretty()} in ${body.pretty()})"
-//        is LetRec -> "(let rec $binder ${type?.let { ": ${it.pretty()}" }
-//            ?: ""} = ${expr.pretty()} in ${body.pretty()})"
-//        is If -> "(if ${condition.pretty()} then ${thenCase.pretty()} else ${elseCase.pretty()})"
-//        is Construction -> "${ty}::${dtor}(${fields.joinToString(", ") { it.pretty() }})"
-//        is Match -> "match ${expr.pretty()} { ${cases.joinToString(", ") { it.pretty() }} }"
-//    }
-
-    fun pretty(): String {
-        return show().pretty(60, 0.4F)
-    }
+    fun pretty(): String = show().pretty(60, 0.4F)
 
     fun show(): Doc<Nothing> = showInner(0)
 
