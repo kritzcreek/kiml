@@ -173,6 +173,7 @@ class Codegen {
                 Instr.GetLocal(offset),
                 Instr.I32Const(4),
                 Instr.I32Mul,
+                Instr.I32Add,
                 Instr.GetLocal(field),
                 Instr.I32Store(2, 0),
                 // After writing the field put the pack pointer back on the stack
@@ -188,6 +189,7 @@ class Codegen {
                 Instr.GetLocal(offset),
                 Instr.I32Const(4),
                 Instr.I32Mul,
+                Instr.I32Add,
                 Instr.I32Load(2, 0)
             )
         }
@@ -386,9 +388,15 @@ class Codegen {
             }
             is IR.Expression.Match -> {
                 val scrutinee = locals.register(Value.I32)
+                val tag = locals.register(Value.I32)
                 compile_expr(locals, expr.scrutinee) +
-                        listOf<Instr>(Instr.TeeLocal(scrutinee), Instr.Call(func_index("read_pack_tag"))) +
-                        TODO()
+                        listOf<Instr>(
+                            Instr.TeeLocal(scrutinee),
+                            Instr.Call(func_index("read_pack_tag")),
+                            Instr.SetLocal(tag)
+                        ) + expr.cases.fold(listOf<Instr>(Instr.Unreachable)) { acc, case ->
+                    compile_case(locals, scrutinee, tag, case, acc)
+                }
 
             }
             is IR.Expression.If ->
@@ -405,19 +413,45 @@ class Codegen {
                         listOf(Instr.SetLocal(binder)) +
                         compile_expr(locals, body)
             }
-            // is IR.Expression.MakeClosure -> TODO()
             is IR.Expression.GetLocal -> listOf(Instr.GetLocal(expr.ix))
         }
+    }
+
+    private fun compile_case(locals: Locals, scrutinee: Int, tag: Int, case: IR.Case, cont: List<Instr>): List<Instr> {
+        val binders = case.binders.map { locals.register(Value.I32) }
+        return listOf<Instr>(
+            Instr.GetLocal(tag),
+            Instr.I32Const(case.tag),
+            Instr.I32Eq,
+            Instr.If(Value.I32)
+        ) + binders.mapIndexed { ix, b ->
+            listOf<Instr>(
+                Instr.GetLocal(scrutinee),
+                Instr.I32Const(ix),
+                Instr.Call(func_index("read_pack_field")),
+                Instr.SetLocal(b)
+            )
+        }.flatten() +
+                compile_expr(locals, case.body.instantiate(binders.map(IR.Expression::GetLocal))) +
+                listOf<Instr>(Instr.Else) +
+                cont +
+                listOf(
+                    Instr.End
+                )
     }
 }
 
 
-fun main(): Unit {
+fun main() {
     val input =
         """
-let y = 1 in
-let rec sum = \x. if eq_int x y then 1 else add x (sum (sub x y)) in
-sum 5
+type Maybe<a> { Just(a), Nothing() }
+
+let x = Maybe::Just(3) in
+match x {
+  Maybe::Just(d) -> add d 4,
+  Maybe::Nothing() -> 20
+}
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()
 
