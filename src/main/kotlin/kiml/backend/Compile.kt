@@ -136,6 +136,69 @@ class Codegen {
             )
         }
 
+        // Pack Layout:
+        // | tag 2byte | arity 2byte | values n*4byte |
+
+        make_fn2("make_pack", Value.I32, Value.I32) { locals, tag, arity ->
+            val pack_start = locals.register(Value.I32)
+            listOf(
+                // allocate 4*arity + 4
+                Instr.GetLocal(arity),
+                Instr.I32Const(4),
+                Instr.I32Mul,
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.Call(allocate),
+                // Write tag and arity
+                Instr.TeeLocal(pack_start),
+                Instr.GetLocal(tag),
+                Instr.I32Store16(1, 0),
+                Instr.GetLocal(pack_start),
+                Instr.I32Const(2),
+                Instr.I32Add,
+                Instr.GetLocal(arity),
+                Instr.I32Store16(1, 0),
+                Instr.GetLocal(pack_start)
+            )
+        }
+
+        make_fnN("write_pack_field", listOf(Value.I32, Value.I32, Value.I32)) { _, args ->
+            val pack = args[0]
+            val offset = args[1]
+            val field = args[2]
+            listOf(
+                Instr.GetLocal(pack),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.GetLocal(offset),
+                Instr.I32Const(4),
+                Instr.I32Mul,
+                Instr.GetLocal(field),
+                Instr.I32Store(2, 0),
+                // After writing the field put the pack pointer back on the stack
+                Instr.GetLocal(pack)
+            )
+        }
+
+        make_fn2("read_pack_field", Value.I32, Value.I32) { _, pack, offset ->
+            listOf(
+                Instr.GetLocal(pack),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.GetLocal(offset),
+                Instr.I32Const(4),
+                Instr.I32Mul,
+                Instr.I32Load(2, 0)
+            )
+        }
+
+        make_fn1("read_pack_tag", Value.I32) { _, pack ->
+            listOf(
+                Instr.GetLocal(pack),
+                Instr.I32Load16S(1, 0)
+            )
+        }
+
         make_fn1("add", Value.I32) { _, arg_pointer ->
             listOf(
                 Instr.GetLocal(arg_pointer),
@@ -310,8 +373,24 @@ class Codegen {
                 compile_expr(locals, expr.func) +
                         compile_expr(locals, expr.argument) +
                         listOf(Instr.Call(func_index("apply_closure")))
-            is IR.Expression.Pack -> TODO()
-            is IR.Expression.Match -> TODO()
+            is IR.Expression.Pack -> {
+                listOf<Instr>(
+                    Instr.I32Const(expr.tag),
+                    Instr.I32Const(expr.values.size),
+                    Instr.Call(func_index("make_pack"))
+                ) + expr.values.withIndex().flatMap { (ix, field) ->
+                    listOf(Instr.I32Const(ix)) +
+                            compile_expr(locals, field) +
+                            listOf(Instr.Call(func_index("write_pack_field")))
+                }
+            }
+            is IR.Expression.Match -> {
+                val scrutinee = locals.register(Value.I32)
+                compile_expr(locals, expr.scrutinee) +
+                        listOf<Instr>(Instr.TeeLocal(scrutinee), Instr.Call(func_index("read_pack_tag"))) +
+                        TODO()
+
+            }
             is IR.Expression.If ->
                 compile_expr(locals, expr.condition) +
                         listOf(Instr.If(Value.I32)) +
