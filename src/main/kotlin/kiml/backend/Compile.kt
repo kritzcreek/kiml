@@ -10,10 +10,7 @@ import asmble.ast.Node.Type.Value
 import asmble.io.AstToBinary
 import asmble.io.AstToSExpr
 import asmble.io.ByteWriter
-import kiml.frontend.Lexer
-import kiml.frontend.Parser
-import kiml.frontend.TypeInfo
-import kiml.frontend.TypeMap
+import kiml.frontend.*
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -66,6 +63,90 @@ class Codegen {
                 Instr.GetLocal(closureStart)
             )
         }
+
+
+//  (func $copy_closure (param $closure i32) (result i32)
+        val copy_closure = make_fn1(
+            "copy_closure",
+            Value.I32
+        ) { locals, closure ->
+//    (local $new_closure i32) (local $size i32) (local $arity i32) (local $x i32)
+            val new_closure = locals.register(Value.I32)
+            val size = locals.register(Value.I32)
+            val arity = locals.register(Value.I32)
+            val x = locals.register(Value.I32)
+            listOf(
+//    local.get $closure
+                Instr.GetLocal(closure),
+//    i32.load16_s
+                Instr.I32Load16S(1, 0),
+//    local.tee $arity
+                Instr.TeeLocal(arity),
+//    i32.const 4
+                Instr.I32Const(4),
+//    i32.mul
+                Instr.I32Mul,
+//    i32.const 8
+                Instr.I32Const(8),
+//    i32.add
+                Instr.I32Add,
+//    local.tee $size
+                Instr.TeeLocal(size),
+//    call $allocate
+                Instr.Call(allocate),
+//    local.set $new_closure
+                Instr.SetLocal(new_closure),
+//    i32.const 0
+                Instr.I32Const(0),
+//    local.set $x
+                Instr.SetLocal(x),
+//    block  ;; label = @1
+                Instr.Block(null),
+//      loop  ;; label = @2
+                Instr.Loop(null),
+//        local.get $x
+                Instr.GetLocal(x),
+//        local.get $size
+                Instr.GetLocal(size),
+//        i32.ge_s
+                Instr.I32GeS,
+//        br_if 1 (;@1;)
+                Instr.BrIf(1),
+//        local.get $x
+                Instr.GetLocal(x),
+//        local.get $new_closure
+                Instr.GetLocal(new_closure),
+//        i32.add
+                Instr.I32Add,
+//        local.get $x
+                Instr.GetLocal(x),
+//        local.get $closure
+                Instr.GetLocal(closure),
+//        i32.add
+                Instr.I32Add,
+//        i32.load
+                Instr.I32Load(2, 0),
+//        i32.store
+                Instr.I32Store(2, 0),
+//        i32.const 4
+                Instr.I32Const(4),
+//        local.get $x
+                Instr.GetLocal(x),
+//        i32.add
+                Instr.I32Add,
+//        local.set $x
+                Instr.SetLocal(x),
+//        br 0 (;@2;)
+                Instr.Br(0),
+//      end
+                Instr.End,
+//    end
+                Instr.End,
+//    local.get $new_closure)
+                Instr.GetLocal(new_closure)
+            )
+        }
+
         make_fn2(
             "apply_closure",
             Value.I32,
@@ -76,6 +157,8 @@ class Codegen {
             val codePointer = locals.register(Value.I32)
             listOf(
                 Instr.GetLocal(closure_start),
+                Instr.Call(copy_closure),
+                Instr.TeeLocal(closure_start),
                 Instr.I32Load16S(1, 0),
                 Instr.SetLocal(arity),
 
@@ -237,11 +320,24 @@ class Codegen {
             )
         }
         register_table_func("sub")
+        make_fn1("div", Value.I32) { _, arg_pointer ->
+            listOf(
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Load(2, 0),
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.I32Load(2, 0),
+                Instr.I32DivS
+            )
+        }
+        register_table_func("div")
     }
 
     fun get_arity(funcName: String): Int =
         when (funcName) {
             "add" -> 2
+            "div" -> 2
             "sub" -> 2
             "eq_int" -> 2
             else -> global_funcs[func_index("$funcName\$inner")]
@@ -445,18 +541,48 @@ class Codegen {
 fun main() {
     val input =
         """
-type Maybe<a> { Just(a), Nothing() }
+type Maybe<a> { Nothing(), Just(a) }
+type Either<a, b> { Left(a), Right(b) }
+type List<a> { Cons(a, List<a>), Nil() }
 
-let x = Maybe::Just(3) in
-match x {
-  Maybe::Just(d) -> add d 4,
-  Maybe::Nothing() -> 20
-}
+let isEven : Int -> Bool =
+  \x. eq_int (div x 2) 0 in
+let fromMaybe : forall a. a -> Maybe<a> -> a =
+  \def. \x. match x {
+    Maybe::Just(x) -> x,
+    Maybe::Nothing() -> def
+  } in
+let rec map : forall a b. (a -> b) -> List<a> -> List<b> = 
+  \f. \ls. match ls {
+    List::Nil() -> List::Nil(),
+    List::Cons(x, xs) -> List::Cons(f x, map f xs),
+  } in
+let rec sum : List<Int> -> Int =
+  \ls. match ls {
+    List::Cons(x, xs) -> add x (sum xs),
+    List::Nil() -> 0,
+  } in
+sum (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
 """
-    val (tys, expr) = Parser(Lexer(input)).parseInput()
+
+    val input2 =
+        """
+            type List<a> { Cons(a, List<a>), Nil() }
+            
+            let rec sum = \ls. match ls {
+              List::Cons(x, xs) -> add x (sum xs),
+              List::Nil() -> 0,
+            } in
+            sum (List::Cons(10, List::Nil()))
+        """
+    val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
     val typeMap = TypeMap(HashMap())
     tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }
+
+    val typeChecker = TypeChecker(CheckState.initial())
+    typeChecker.checkState.typeMap = typeMap
+    println("Inferred: ${typeChecker.inferExpr(expr)}")
 
     val lowering = Lowering(typeMap)
     val prog = lowering.lowerProg(expr)

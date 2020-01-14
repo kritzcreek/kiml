@@ -46,7 +46,7 @@ data class TypeMap(val tm: HashMap<Name, TypeInfo>)
 
 data class CheckState(
     var environment: Environment,
-    val typeMap: TypeMap,
+    var typeMap: TypeMap,
     val substitution: Substitution = Substitution(HashMap()),
     var fresh_supply: Int = 0
 ) {
@@ -54,11 +54,11 @@ data class CheckState(
         fun initial(): CheckState {
             val env = Environment()
             listOf(
-                "isEven" to "Int -> Bool",
                 "eq_int" to "Int -> Int -> Bool",
                 "add" to "Int -> Int -> Int",
                 "mul" to "Int -> Int -> Int",
-                "sub" to "Int -> Int -> Int"
+                "sub" to "Int -> Int -> Int",
+                "div" to "Int -> Int -> Int"
             ).forEach { (name, ty) ->
                 env[Name(name)] = Parser.parseType(ty)
             }

@@ -9,7 +9,7 @@ sealed class LNName<A> {
     data class Bound<A>(val ix: Index) : LNName<A>()
 
     data class Index(val depth: Int, val breadth: Int) {
-        fun shift(): Index = this.copy(depth = depth + 1)
+        fun shift(i: Int = 1): Index = this.copy(depth = depth + i)
     }
 
     fun show(): Doc<Nothing> =
@@ -17,12 +17,8 @@ sealed class LNName<A> {
             is Free -> v.toString().text()
             is Bound -> lAngle<Nothing>() +
                     ix.depth.toString().text() +
-                    if (ix.breadth != 0) {
-                        comma<Nothing>() + space() +
-                                ix.breadth.toString().text() + rAngle()
-                    } else {
-                        rAngle()
-                    }
+                    comma() + space() +
+                    ix.breadth.toString().text() + rAngle()
         }
 }
 
@@ -83,6 +79,38 @@ sealed class IR {
             }
         }
 
+        fun over(f: (Expression) -> Expression): Expression {
+            return f(when (this) {
+                is Int, is Bool, is Var, is GetLocal -> this
+                is Application -> Application(
+                    func.over(f),
+                    argument.over(f)
+                )
+                is Pack -> Pack(
+                    tag,
+                    values.map { it.over(f) }
+                )
+                is Match -> Match(
+                    scrutinee.over(f),
+                    cases
+                )
+                is If -> If(
+                    condition.over(f),
+                    thenCase.over(f),
+                    elseCase.over(f)
+                )
+                is Let -> Let(
+                    binder,
+                    expr.over(f),
+                    body.over(f)
+                )
+            })
+        }
+
+        fun subst(name: Name, replacement: Expression): Expression = over {
+            if (it is Var && it.name is LNName.Free && it.name.v == name) replacement
+            else it
+        }
 
         fun show(): Doc<Nothing> {
             return when (this) {
@@ -90,8 +118,14 @@ sealed class IR {
                 is Bool -> bool.toString().text()
                 is Var -> name.show()
                 is Application -> func.show() + space() + argument.show().enclose(lParen(), rParen())
-//                is Pack -> TODO()
-//                is Match -> TODO()
+                is Pack -> "Pack".text<Nothing>() + (listOf(tag.doc<Nothing>()) + this.values.map { it.show() }).encloseSep(
+                    lParen(),
+                    rParen(),
+                    comma<Nothing>() + space()
+                )
+                is Match -> "match".text<Nothing>() + space() + scrutinee.show() + cases.map { it.show() }.encloseSep(
+                    lBrace(), rBrace(), comma()
+                )
                 is If -> "if".text<Nothing>() + space() + condition.show() + space() + "then".text() +
                         space() + thenCase.show() +
                         space() + "else".text() + space() + elseCase.show()
@@ -108,6 +142,13 @@ sealed class IR {
     data class Case(val tag: Int, val binders: List<Name>, val body: Expression) {
         fun instantiateInner(depth: Int, replacements: List<Expression>): Case =
             Case(tag, binders, body.instantiateInner(depth + 1, replacements))
+
+        fun show(): Doc<Nothing> =
+            (tag.doc<Nothing>() + space() + binders.map { it.show() }.encloseSep(
+                lParen(),
+                rParen(),
+                comma<Nothing>() + space()
+            ) + space() + "->".text()).group() + body.show()
     }
 
     data class Declaration(
@@ -121,8 +162,7 @@ sealed class IR {
                     arguments
                         .map { it.v.text<Nothing>() }
                         .encloseSep(lParen(), rParen(), comma<Nothing>() + space())).group()
-            val doc = (header + space() + lBrace() + line() + body.show()).nest(2) + line() + rBrace()
-            return doc
+            return (header + space() + lBrace() + line() + body.show()).nest(2) + line() + rBrace()
         }
 
         fun pretty(): String {
@@ -145,6 +185,32 @@ class Lowering(val typeMap: TypeMap) {
         return if (ix != -1) ix else throw Exception("Unknown dtor name $dtor")
     }
 
+    fun lowerLambda(expr: Expression.Lambda, env: MutableMap<Name, LNName.Index>, topName: Name): IR.Expression {
+        val (arguments, body) = expr.foldArguments()
+        val capturedVars =
+            // We only keep non top-level bound names
+            expr
+                .freeVars()
+                .mapNotNull { env[it]?.let { index -> it to LNName.Bound<Name>(index) } }
+        println("$topName: $capturedVars")
+        val allArguments = capturedVars.map { it.first } + arguments
+        val tmpEnv = HashMap<Name, LNName.Index>()
+        allArguments.forEachIndexed { ix, arg ->
+            tmpEnv[arg] = LNName.Index(0, ix)
+        }
+        val liftedDecl =
+            IR.Declaration(
+                topName,
+                allArguments,
+                lowerExpr(body, tmpEnv)
+            )
+        liftedDeclarations.add(liftedDecl)
+        val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
+        return capturedVars.fold(fn) { acc, (_, bound) ->
+            IR.Expression.Application(acc, IR.Expression.Var(bound))
+        }
+    }
+
     fun lowerExpr(expr: Expression, env: MutableMap<Name, LNName.Index>): IR.Expression {
         return when (expr) {
             is Expression.Int -> IR.Expression.Int(expr.int)
@@ -153,31 +219,7 @@ class Lowering(val typeMap: TypeMap) {
                 env[expr.name]?.let { LNName.Bound<Name>(it) } ?: LNName.Free(expr.name)
             )
             is Expression.Lambda -> {
-                val closureName = freshName("lifted")
-                val (arguments, body) = expr.foldArguments()
-                val freeVars =
-                    // We only keep non top-level bound names
-                    expr
-                        .freeVars()
-                        .toList()
-                        .mapNotNull { env[it]?.let { index -> it to LNName.Bound<Name>(index) } }
-                println("$closureName: $freeVars")
-                val allArguments = freeVars.map { it.first } + arguments
-                val tmpEnv = HashMap<Name, LNName.Index>()
-                allArguments.forEachIndexed { ix, arg ->
-                    tmpEnv.put(arg, LNName.Index(0, ix))
-                }
-                val liftedDecl =
-                    IR.Declaration(
-                        closureName,
-                        allArguments,
-                        lowerExpr(body, tmpEnv)
-                    )
-                liftedDeclarations.add(liftedDecl)
-                val fn: IR.Expression = IR.Expression.Var(LNName.Free(closureName))
-                freeVars.fold(fn) { acc, (_, bound) ->
-                    IR.Expression.Application(acc, IR.Expression.Var(bound))
-                }
+                lowerLambda(expr, env, freshName("lifted"))
             }
             is Expression.App -> IR.Expression.Application(
                 lowerExpr(expr.function, env),
@@ -194,48 +236,23 @@ class Lowering(val typeMap: TypeMap) {
                 )
             }
             is Expression.LetRec -> {
-                if (expr.expr !is Expression.Lambda) {
-                    throw Exception("Only functions can be defined recursively!")
-                }
-                val lambda = expr.expr
-                val closureName = freshName("lifted")
-                val (arguments, body) = lambda.foldArguments()
-                val freeVars =
-                    // We only keep non top-level bound names (and the recursive binder also isn't free)
-                    lambda
-                        .freeVars()
-                        .toList()
-                        .mapNotNull {
-                            if (it == expr.binder) null
-                            else env[it]?.let { index -> it to LNName.Bound<Name>(index) }
-                        }
-                val allArguments = freeVars.map { it.first } + arguments
+                if (expr.expr !is Expression.Lambda) throw Exception("Only functions may be defined recursively")
                 val tmpEnv = HashMap<Name, LNName.Index>()
-                allArguments.forEachIndexed { ix, arg ->
-                    tmpEnv[arg] = LNName.Index(0, ix)
-                    tmpEnv[expr.binder] = LNName.Index(-1, 0)
-                }
-
-                val liftedFn: IR.Expression = IR.Expression.Var(LNName.Free(closureName))
-                val fn = freeVars.fold(liftedFn) { acc, (_, bound) ->
-                    IR.Expression.Application(acc, IR.Expression.Var(bound))
-                }
-
-                val liftedDecl =
-                    IR.Declaration(
-                        closureName,
-                        allArguments,
-                        lowerExpr(body, tmpEnv).instantiateInner(-1, listOf(fn))
-                    )
-                liftedDeclarations.add(liftedDecl)
-
-                val tmpEnv2 = HashMap<Name, LNName.Index>()
                 env.mapValuesTo(tmpEnv) { it.value.shift() }
-                tmpEnv2[expr.binder] = LNName.Index(0, 0)
+                tmpEnv[expr.binder] = LNName.Index(0, 0)
+                val topName = freshName(expr.binder.v)
                 IR.Expression.Let(
                     binder = LNName.Free(expr.binder),
-                    expr = fn,
-                    body = lowerExpr(expr.body, tmpEnv2)
+                    expr = lowerLambda(expr.expr, tmpEnv, topName).instantiate(
+                        listOf(
+                            IR.Expression.Var(
+                                LNName.Free(
+                                    topName
+                                )
+                            )
+                        )
+                    ),
+                    body = lowerExpr(expr.body, tmpEnv)
                 )
             }
             is Expression.If -> IR.Expression.If(
@@ -308,10 +325,12 @@ map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
 """
     val input2 =
         """
-let y = 4 in
-let f = \x. add x y in
+let identity = \x. x in
+let rec f = \x. f x in
 f 10
 """
+
+
     val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
     val typeMap = TypeMap(HashMap())
