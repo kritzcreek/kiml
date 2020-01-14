@@ -185,32 +185,6 @@ class Lowering(val typeMap: TypeMap) {
         return if (ix != -1) ix else throw Exception("Unknown dtor name $dtor")
     }
 
-    fun lowerLambda(expr: Expression.Lambda, env: MutableMap<Name, LNName.Index>, topName: Name): IR.Expression {
-        val (arguments, body) = expr.foldArguments()
-        val capturedVars =
-            // We only keep non top-level bound names
-            expr
-                .freeVars()
-                .mapNotNull { env[it]?.let { index -> it to LNName.Bound<Name>(index) } }
-        println("$topName: $capturedVars")
-        val allArguments = capturedVars.map { it.first } + arguments
-        val tmpEnv = HashMap<Name, LNName.Index>()
-        allArguments.forEachIndexed { ix, arg ->
-            tmpEnv[arg] = LNName.Index(0, ix)
-        }
-        val liftedDecl =
-            IR.Declaration(
-                topName,
-                allArguments,
-                lowerExpr(body, tmpEnv)
-            )
-        liftedDeclarations.add(liftedDecl)
-        val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
-        return capturedVars.fold(fn) { acc, (_, bound) ->
-            IR.Expression.Application(acc, IR.Expression.Var(bound))
-        }
-    }
-
     fun lowerExpr(expr: Expression, env: MutableMap<Name, LNName.Index>): IR.Expression {
         return when (expr) {
             is Expression.Int -> IR.Expression.Int(expr.int)
@@ -219,12 +193,84 @@ class Lowering(val typeMap: TypeMap) {
                 env[expr.name]?.let { LNName.Bound<Name>(it) } ?: LNName.Free(expr.name)
             )
             is Expression.Lambda -> {
-                lowerLambda(expr, env, freshName("lifted"))
+                val topName = freshName("lifted")
+                val (arguments, body) = expr.foldArguments()
+                val capturedVars =
+                    // We only keep non top-level bound names
+                    expr
+                        .freeVars()
+                        .mapNotNull { env[it]?.let { index -> it to LNName.Bound<Name>(index) } }
+                println("$topName: $capturedVars")
+                val allArguments = capturedVars.map { it.first } + arguments
+                val tmpEnv = HashMap<Name, LNName.Index>()
+                allArguments.forEachIndexed { ix, arg ->
+                    tmpEnv[arg] = LNName.Index(0, ix)
+                }
+                val liftedDecl =
+                    IR.Declaration(
+                        topName,
+                        allArguments,
+                        lowerExpr(body, tmpEnv)
+                    )
+                liftedDeclarations.add(liftedDecl)
+                val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
+                capturedVars.fold(fn) { acc, (_, bound) ->
+                    IR.Expression.Application(acc, IR.Expression.Var(bound))
+                }
             }
             is Expression.App -> IR.Expression.Application(
                 lowerExpr(expr.function, env),
                 lowerExpr(expr.argument, env)
             )
+            is Expression.LetRec -> {
+
+                if (expr.expr !is Expression.Lambda) {
+                    throw Exception("Only functions may be defined recursively")
+                }
+                val topName = freshName("${expr.binder}")
+                val (arguments, body) = expr.expr.foldArguments()
+                val capturedVars =
+                    // We only keep non top-level bound names
+                    expr
+                        .freeVars()
+                        .mapNotNull {
+                            if (it == expr.binder) null
+                            else env[it]?.let { index -> it to LNName.Bound<Name>(index) }
+                        }
+                println("$topName: $capturedVars")
+
+                val exprFn: Expression = Expression.Var(topName)
+                val replacement = capturedVars.fold(exprFn) { acc, (name, _) ->
+                    Expression.App(acc, Expression.Var(name))
+                }
+                val newBody = body.subst(expr.binder, replacement)
+
+                val allArguments = capturedVars.map { it.first } + arguments
+                val tmpEnv = HashMap<Name, LNName.Index>()
+                allArguments.forEachIndexed { ix, arg ->
+                    tmpEnv[arg] = LNName.Index(0, ix)
+                }
+                val liftedDecl =
+                    IR.Declaration(
+                        topName,
+                        allArguments,
+                        lowerExpr(newBody, tmpEnv)
+                    )
+                liftedDeclarations.add(liftedDecl)
+                val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
+                val loweredExpr = capturedVars.fold(fn) { acc, (_, bound) ->
+                    IR.Expression.Application(acc, IR.Expression.Var(bound))
+                }
+
+                val tmpEnv2 = HashMap<Name, LNName.Index>()
+                env.mapValuesTo(tmpEnv2) { it.value.shift() }
+                tmpEnv2[expr.binder] = LNName.Index(0, 0)
+                IR.Expression.Let(
+                    binder = LNName.Free(expr.binder),
+                    expr = loweredExpr,
+                    body = lowerExpr(expr.body, tmpEnv2)
+                )
+            }
             is Expression.Let -> {
                 val tmpEnv = HashMap<Name, LNName.Index>()
                 env.mapValuesTo(tmpEnv) { it.value.shift() }
@@ -232,26 +278,6 @@ class Lowering(val typeMap: TypeMap) {
                 IR.Expression.Let(
                     binder = LNName.Free(expr.binder),
                     expr = lowerExpr(expr.expr, env),
-                    body = lowerExpr(expr.body, tmpEnv)
-                )
-            }
-            is Expression.LetRec -> {
-                if (expr.expr !is Expression.Lambda) throw Exception("Only functions may be defined recursively")
-                val tmpEnv = HashMap<Name, LNName.Index>()
-                env.mapValuesTo(tmpEnv) { it.value.shift() }
-                tmpEnv[expr.binder] = LNName.Index(0, 0)
-                val topName = freshName(expr.binder.v)
-                IR.Expression.Let(
-                    binder = LNName.Free(expr.binder),
-                    expr = lowerLambda(expr.expr, tmpEnv, topName).instantiate(
-                        listOf(
-                            IR.Expression.Var(
-                                LNName.Free(
-                                    topName
-                                )
-                            )
-                        )
-                    ),
                     body = lowerExpr(expr.body, tmpEnv)
                 )
             }
@@ -326,7 +352,7 @@ map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
     val input2 =
         """
 let identity = \x. x in
-let rec f = \x. f x in
+let rec f = \x. identity f x in
 f 10
 """
 

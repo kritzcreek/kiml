@@ -1,6 +1,7 @@
 package kiml.syntax
 
 import pretty.*
+import kotlin.math.exp
 
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
@@ -34,6 +35,34 @@ sealed class Expression {
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
     data class Construction(val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
+
+    fun subst(v: Name, replacement: Expression): Expression =
+        when (this) {
+            is Int, is Bool -> this
+            is Var -> if (v == name) replacement else this
+            is Lambda -> if (v == binder) this else this.copy(body = body.subst(v, replacement))
+            is App -> this.copy(function = function.subst(v, replacement), argument = argument.subst(v, replacement))
+            is Let -> this.copy(
+                expr = expr.subst(v, replacement),
+                body = if (v == binder) body else body.subst(v, replacement)
+            )
+            is LetRec -> if (v == binder) this else this.copy(
+                expr = expr.subst(v, replacement),
+                body = body.subst(v, replacement)
+            )
+            is If -> this.copy(
+                condition = condition.subst(v, replacement),
+                thenCase = thenCase.subst(v, replacement),
+                elseCase = elseCase.subst(v, replacement)
+            )
+            is Construction -> this.copy(
+                fields = fields.map { it.subst(v, replacement) }
+            )
+            is Match -> this.copy(
+                expr = expr.subst(v, replacement),
+                cases = cases.map { it.subst(v, replacement) }
+            )
+        }
 
     fun pretty(): String = show().pretty(60, 0.4F)
 
@@ -121,6 +150,12 @@ data class Case(val pattern: Pattern, val expr: Expression) {
         res.removeAll(pattern.binders())
         return res
     }
+
+    fun subst(v: Name, replacement: Expression): Case =
+        if (pattern.binders().contains(v)) this
+        else this.copy(
+            expr = expr.subst(v, replacement)
+        )
 }
 
 sealed class Pattern {
@@ -153,7 +188,6 @@ sealed class Pattern {
         }
     }
 }
-
 
 inline class TyVar(val v: String) {
     override fun toString(): String = v

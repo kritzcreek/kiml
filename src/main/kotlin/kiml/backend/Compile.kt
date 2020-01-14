@@ -573,7 +573,7 @@ sum (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
               List::Cons(x, xs) -> add x (sum xs),
               List::Nil() -> 0,
             } in
-            sum (List::Cons(10, List::Nil()))
+            sum (List::Cons(10, List::Cons(12, List::Nil())))
         """
     val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
