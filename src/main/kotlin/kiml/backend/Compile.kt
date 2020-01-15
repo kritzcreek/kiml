@@ -1,11 +1,7 @@
 package kiml.backend
 
 import asmble.ast.Node
-import asmble.ast.Node.Module
-import asmble.ast.Node.Func
-import asmble.ast.Node.Instr
-import asmble.ast.Node.Export
-import asmble.ast.Node.ExternalKind
+import asmble.ast.Node.*
 import asmble.ast.Node.Type.Value
 import asmble.io.AstToBinary
 import asmble.io.AstToSExpr
@@ -562,7 +558,7 @@ let rec sum : List<Int> -> Int =
     List::Cons(x, xs) -> add x (sum xs),
     List::Nil() -> 0,
   } in
-sum (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
+sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
 """
 
     val input2 =
@@ -575,7 +571,7 @@ sum (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
             } in
             sum (List::Cons(10, List::Cons(12, List::Nil())))
         """
-    val (tys, expr) = Parser(Lexer(input2)).parseInput()
+    val (tys, expr) = Parser(Lexer(input)).parseInput()
 
     val typeMap = TypeMap(HashMap())
     tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }

@@ -1,7 +1,6 @@
 package kiml.syntax
 
 import pretty.*
-import kotlin.math.exp
 
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
@@ -17,6 +16,9 @@ sealed class Expression {
                 else -> listOf(binder) to body
             }
         }
+
+        fun substLam(v: Name, replacement: Expression): Lambda =
+            if (v == binder) this else this.copy(body = body.subst(v, replacement))
     }
 
     data class App(val function: Expression, val argument: Expression) : Expression() {
@@ -40,7 +42,7 @@ sealed class Expression {
         when (this) {
             is Int, is Bool -> this
             is Var -> if (v == name) replacement else this
-            is Lambda -> if (v == binder) this else this.copy(body = body.subst(v, replacement))
+            is Lambda -> substLam(v, replacement)
             is App -> this.copy(function = function.subst(v, replacement), argument = argument.subst(v, replacement))
             is Let -> this.copy(
                 expr = expr.subst(v, replacement),

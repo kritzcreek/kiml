@@ -1,7 +1,13 @@
 package kiml.backend
 
-import kiml.frontend.*
-import kiml.syntax.*
+import kiml.frontend.Lexer
+import kiml.frontend.Parser
+import kiml.frontend.TypeInfo
+import kiml.frontend.TypeMap
+import kiml.syntax.Case
+import kiml.syntax.Expression
+import kiml.syntax.Name
+import kiml.syntax.Pattern
 import pretty.*
 
 sealed class LNName<A> {
@@ -185,6 +191,28 @@ class Lowering(val typeMap: TypeMap) {
         return if (ix != -1) ix else throw Exception("Unknown dtor name $dtor")
     }
 
+    private fun liftFunction(
+        topName: Name,
+        capturedVars: List<Pair<Name, LNName.Bound<Name>>>,
+        lambda: Expression.Lambda
+    ): IR.Expression {
+        val (arguments, body) = lambda.foldArguments()
+        val allArguments = capturedVars.map { it.first } + arguments
+        val tmpEnv = HashMap<Name, LNName.Index>()
+        allArguments.forEachIndexed { ix, arg ->
+            tmpEnv[arg] = LNName.Index(0, ix)
+        }
+        liftedDeclarations += IR.Declaration(
+            topName,
+            allArguments,
+            lowerExpr(body, tmpEnv)
+        )
+        val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
+        return capturedVars.fold(fn) { acc, (_, bound) ->
+            IR.Expression.Application(acc, IR.Expression.Var(bound))
+        }
+    }
+
     fun lowerExpr(expr: Expression, env: MutableMap<Name, LNName.Index>): IR.Expression {
         return when (expr) {
             is Expression.Int -> IR.Expression.Int(expr.int)
@@ -194,81 +222,43 @@ class Lowering(val typeMap: TypeMap) {
             )
             is Expression.Lambda -> {
                 val topName = freshName("lifted")
-                val (arguments, body) = expr.foldArguments()
                 val capturedVars =
                     // We only keep non top-level bound names
                     expr
                         .freeVars()
                         .mapNotNull { env[it]?.let { index -> it to LNName.Bound<Name>(index) } }
-                println("$topName: $capturedVars")
-                val allArguments = capturedVars.map { it.first } + arguments
-                val tmpEnv = HashMap<Name, LNName.Index>()
-                allArguments.forEachIndexed { ix, arg ->
-                    tmpEnv[arg] = LNName.Index(0, ix)
-                }
-                val liftedDecl =
-                    IR.Declaration(
-                        topName,
-                        allArguments,
-                        lowerExpr(body, tmpEnv)
-                    )
-                liftedDeclarations.add(liftedDecl)
-                val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
-                capturedVars.fold(fn) { acc, (_, bound) ->
-                    IR.Expression.Application(acc, IR.Expression.Var(bound))
-                }
+                liftFunction(topName, capturedVars, expr)
             }
             is Expression.App -> IR.Expression.Application(
                 lowerExpr(expr.function, env),
                 lowerExpr(expr.argument, env)
             )
             is Expression.LetRec -> {
-
                 if (expr.expr !is Expression.Lambda) {
                     throw Exception("Only functions may be defined recursively")
                 }
                 val topName = freshName("${expr.binder}")
-                val (arguments, body) = expr.expr.foldArguments()
                 val capturedVars =
-                    // We only keep non top-level bound names
                     expr
                         .freeVars()
                         .mapNotNull {
                             if (it == expr.binder) null
                             else env[it]?.let { index -> it to LNName.Bound<Name>(index) }
                         }
-                println("$topName: $capturedVars")
 
                 val exprFn: Expression = Expression.Var(topName)
                 val replacement = capturedVars.fold(exprFn) { acc, (name, _) ->
                     Expression.App(acc, Expression.Var(name))
                 }
-                val newBody = body.subst(expr.binder, replacement)
+                val loweredExpr = liftFunction(topName, capturedVars, expr.expr.substLam(expr.binder, replacement))
 
-                val allArguments = capturedVars.map { it.first } + arguments
                 val tmpEnv = HashMap<Name, LNName.Index>()
-                allArguments.forEachIndexed { ix, arg ->
-                    tmpEnv[arg] = LNName.Index(0, ix)
-                }
-                val liftedDecl =
-                    IR.Declaration(
-                        topName,
-                        allArguments,
-                        lowerExpr(newBody, tmpEnv)
-                    )
-                liftedDeclarations.add(liftedDecl)
-                val fn: IR.Expression = IR.Expression.Var(LNName.Free(topName))
-                val loweredExpr = capturedVars.fold(fn) { acc, (_, bound) ->
-                    IR.Expression.Application(acc, IR.Expression.Var(bound))
-                }
-
-                val tmpEnv2 = HashMap<Name, LNName.Index>()
-                env.mapValuesTo(tmpEnv2) { it.value.shift() }
-                tmpEnv2[expr.binder] = LNName.Index(0, 0)
+                env.mapValuesTo(tmpEnv) { it.value.shift() }
+                tmpEnv[expr.binder] = LNName.Index(0, 0)
                 IR.Expression.Let(
                     binder = LNName.Free(expr.binder),
                     expr = loweredExpr,
-                    body = lowerExpr(expr.body, tmpEnv2)
+                    body = lowerExpr(expr.body, tmpEnv)
                 )
             }
             is Expression.Let -> {
