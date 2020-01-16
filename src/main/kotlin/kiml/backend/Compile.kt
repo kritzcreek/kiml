@@ -443,10 +443,11 @@ class Codegen {
                 val (fn, args) = expr.unfoldApps()
                 if (fn is IR.Expression.Var && fn.name is LNName.Free && get_arity(fn.name.v.v) == args.size) {
                     args.flatMap { compile_expr(locals, it) } + Instr.Call(func_index("${fn.name.v.v}\$inner"))
-                } else
+                } else {
                     compile_expr(locals, expr.func) +
                             compile_expr(locals, expr.argument) +
                             listOf(Instr.Call(func_index("apply_closure")))
+                }
             }
             is IR.Expression.Pack -> {
                 listOf<Instr>(
