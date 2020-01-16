@@ -26,6 +26,29 @@ class Codegen {
     val global_funcs: MutableList<Pair<String, Func>> = mutableListOf()
     val table_funcs: MutableList<String> = mutableListOf()
 
+    fun define_builtin_binary(name: String, instr: Instr) {
+        val inner = make_fn2("$name\$inner", Value.I32, Value.I32) { _, x, y ->
+            listOf(
+                Instr.GetLocal(x),
+                Instr.GetLocal(y),
+                instr
+            )
+        }
+
+        make_fn1(name, Value.I32) { _, arg_pointer ->
+            listOf(
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Load(2, 0),
+                Instr.GetLocal(arg_pointer),
+                Instr.I32Const(4),
+                Instr.I32Add,
+                Instr.I32Load(2, 0),
+                Instr.Call(inner)
+            )
+        }
+        register_table_func(name)
+    }
+
     fun init_rts() {
         val watermark =
             register_global("watermark", Node.Global(Node.Type.Global(Value.I32, true), listOf(Instr.I32Const(0))))
@@ -66,7 +89,7 @@ class Codegen {
             "copy_closure",
             Value.I32
         ) { locals, closure ->
-//    (local $new_closure i32) (local $size i32) (local $arity i32) (local $x i32)
+            //    (local $new_closure i32) (local $size i32) (local $arity i32) (local $x i32)
             val new_closure = locals.register(Value.I32)
             val size = locals.register(Value.I32)
             val arity = locals.register(Value.I32)
@@ -280,68 +303,19 @@ class Codegen {
             )
         }
 
-        make_fn1("add", Value.I32) { _, arg_pointer ->
-            listOf(
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Load(2, 0),
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
-                Instr.I32Add
-            )
-        }
-        register_table_func("add")
-        make_fn1("eq_int", Value.I32) { _, arg_pointer ->
-            listOf(
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Load(2, 0),
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
-                Instr.I32Eq
-            )
-        }
-        register_table_func("eq_int")
-        make_fn1("sub", Value.I32) { _, arg_pointer ->
-            listOf(
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Load(2, 0),
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
-                Instr.I32Sub
-            )
-        }
-        register_table_func("sub")
-        make_fn1("div", Value.I32) { _, arg_pointer ->
-            listOf(
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Load(2, 0),
-                Instr.GetLocal(arg_pointer),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
-                Instr.I32DivS
-            )
-        }
-        register_table_func("div")
+        define_builtin_binary("add", Instr.I32Add)
+        define_builtin_binary("eq_int", Instr.I32Eq)
+        define_builtin_binary("sub", Instr.I32Sub)
+        define_builtin_binary("div", Instr.I32DivS)
     }
 
     fun get_arity(funcName: String): Int =
-        when (funcName) {
-            "add" -> 2
-            "div" -> 2
-            "sub" -> 2
-            "eq_int" -> 2
-            else -> global_funcs[func_index("$funcName\$inner")]
-                .second
-                .type
-                .params
-                .size
-        }
+        global_funcs[func_index("$funcName\$inner")]
+            .second
+            .type
+            .params
+            .size
+
 
     fun register_global_func(name: String, func: Func): Int =
         global_funcs.size.also { global_funcs += name to func }
@@ -356,7 +330,7 @@ class Codegen {
         types.size.also { types.add(name to typ) }
 
     private fun dummyFunc(arity: Int) =
-        Func(Node.Type.Func((0 until arity).map { Value.I32 }, null), listOf(), listOf(Instr.Unreachable))
+        Func(Type.Func((0 until arity).map { Value.I32 }, null), listOf(), listOf(Instr.Unreachable))
 
     private fun make_fn1(name: String, arg: Value, body: (Locals, Int) -> List<Instr>): Int {
         val self = register_global_func(name, dummyFunc(1))
@@ -411,7 +385,7 @@ class Codegen {
             compile_decl(decl)
         }
         return Module(
-            memories = listOf(Node.Type.Memory(Node.ResizableLimits(1, null))),
+            memories = listOf(Node.Type.Memory(Node.ResizableLimits(65535, null))),
             globals = globals.map { it.second },
             tables = listOf(Node.Type.Table(Node.ElemType.ANYFUNC, Node.ResizableLimits(table_funcs.size, null))),
             elems = listOf(Node.Elem(0, listOf(Instr.I32Const(0)), table_funcs.map { func_index(it) })),
@@ -463,10 +437,17 @@ class Codegen {
                     )
                 }
             }
-            is IR.Expression.Application ->
-                compile_expr(locals, expr.func) +
-                        compile_expr(locals, expr.argument) +
-                        listOf(Instr.Call(func_index("apply_closure")))
+            is IR.Expression.Application -> {
+                // Optimization: If the called function is a known function with the same arity as the number of given
+                // arguments we can call its stack based variant rather than building up a closure in memory
+                val (fn, args) = expr.unfoldApps()
+                if (fn is IR.Expression.Var && fn.name is LNName.Free && get_arity(fn.name.v.v) == args.size) {
+                    args.flatMap { compile_expr(locals, it) } + Instr.Call(func_index("${fn.name.v.v}\$inner"))
+                } else
+                    compile_expr(locals, expr.func) +
+                            compile_expr(locals, expr.argument) +
+                            listOf(Instr.Call(func_index("apply_closure")))
+            }
             is IR.Expression.Pack -> {
                 listOf<Instr>(
                     Instr.I32Const(expr.tag),
@@ -563,15 +544,15 @@ sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
 
     val input2 =
         """
-            type List<a> { Cons(a, List<a>), Nil() }
-            
-            let rec sum = \ls. match ls {
-              List::Cons(x, xs) -> add x (sum xs),
-              List::Nil() -> 0,
-            } in
-            sum (List::Cons(10, List::Cons(12, List::Nil())))
+            let rec fib = 
+                \x. if eq_int x 1 
+                    then 1 
+                    else if eq_int x 2 
+                        then 1 
+                        else add (fib (sub x 1)) (fib (sub x 2)) in 
+            fib 45
         """
-    val (tys, expr) = Parser(Lexer(input)).parseInput()
+    val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
     val typeMap = TypeMap(HashMap())
     tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }

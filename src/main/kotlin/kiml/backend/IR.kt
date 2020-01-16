@@ -34,7 +34,17 @@ sealed class IR {
         data class Int(val int: kotlin.Int) : Expression()
         data class Bool(val bool: Boolean) : Expression()
         data class Var(val name: LNName<Name>) : Expression()
-        data class Application(val func: Expression, val argument: Expression) : Expression()
+        data class Application(val func: Expression, val argument: Expression) : Expression() {
+            fun unfoldApps(): Pair<Expression, List<Expression>> {
+                return if (func is Expression.Application) {
+                    val (func, args) = func.unfoldApps()
+                    func to args + listOf(argument)
+                } else {
+                    func to listOf(argument)
+                }
+            }
+        }
+
         data class Pack(val tag: kotlin.Int, val values: List<Expression>) : Expression()
         data class Match(val scrutinee: Expression, val cases: List<Case>) : Expression()
         data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
