@@ -36,7 +36,7 @@ sealed class IR {
         data class Var(val name: LNName<Name>) : Expression()
         data class Application(val func: Expression, val argument: Expression) : Expression() {
             fun unfoldApps(): Pair<Expression, List<Expression>> {
-                return if (func is Expression.Application) {
+                return if (func is Application) {
                     val (func, args) = func.unfoldApps()
                     func to args + listOf(argument)
                 } else {
@@ -150,7 +150,6 @@ sealed class IR {
                             expr.show() + space() + "in".text() + line() +
                             body.show()
                 is GetLocal -> "GetLocal($ix)".text()
-                else -> this.toString().text()
             }
         }
     }
@@ -172,7 +171,7 @@ sealed class IR {
         val arguments: List<Name/* add Type here*/>,
         val body: Expression
     ) {
-        fun show(): Doc<Nothing> {
+        private fun show(): Doc<Nothing> {
             val header = ("fun".text<Nothing>() + space() +
                     name.v.text() +
                     arguments
@@ -187,15 +186,15 @@ sealed class IR {
     }
 }
 
-class Lowering(val typeMap: TypeMap) {
-    var freshSupply: Int = 0
-    val liftedDeclarations = mutableListOf<IR.Declaration>()
+class Lowering(private val typeMap: TypeMap) {
+    private var freshSupply: Int = 0
+    private val liftedDeclarations = mutableListOf<IR.Declaration>()
 
-    fun freshName(name: String): Name {
+    private fun freshName(name: String): Name {
         return Name("$${name}_${freshSupply++}")
     }
 
-    fun tagForDtor(type: Name, dtor: Name): Int {
+    private fun tagForDtor(type: Name, dtor: Name): Int {
         val tyInfo = typeMap.tm[type] ?: throw Exception("Unknown type name $type")
         val ix = tyInfo.constructors.indexOfFirst { dtor == it.name }
         return if (ix != -1) ix else throw Exception("Unknown dtor name $dtor")
@@ -223,7 +222,7 @@ class Lowering(val typeMap: TypeMap) {
         }
     }
 
-    fun lowerExpr(expr: Expression, env: MutableMap<Name, LNName.Index>): IR.Expression {
+    private fun lowerExpr(expr: Expression, env: MutableMap<Name, LNName.Index>): IR.Expression {
         return when (expr) {
             is Expression.Int -> IR.Expression.Int(expr.int)
             is Expression.Bool -> IR.Expression.Bool(expr.bool)
@@ -325,7 +324,6 @@ class Lowering(val typeMap: TypeMap) {
         liftedDeclarations.add(IR.Declaration(Name("main"), emptyList(), main))
         return liftedDeclarations
     }
-
 }
 
 fun main() {
@@ -360,7 +358,7 @@ f 10
     val (tys, expr) = Parser(Lexer(input2)).parseInput()
 
     val typeMap = TypeMap(HashMap())
-    tys.forEach { typeMap.tm.put(it.name, TypeInfo(it.typeVariables, it.dataConstructors)) }
+    tys.forEach { typeMap.tm[it.name] = TypeInfo(it.typeVariables, it.dataConstructors) }
 
     val lowering = Lowering(typeMap)
     val prog = lowering.lowerProg(expr)
