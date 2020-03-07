@@ -2,20 +2,22 @@ package kiml.frontend
 
 import kiml.frontend.Token.Companion.get
 import kiml.syntax.*
+import java.io.File
+import kotlin.reflect.KFunction0
 
 
 class Parser(tokens: Iterator<Spanned<Token>>) {
 
     val iterator = PeekableIterator(tokens)
 
-    fun parseInput(): Pair<List<TypeDeclaration>, Expression> {
-        val typeDeclarations = mutableListOf<TypeDeclaration>()
+    fun parseInput(): Pair<List<Declaration.TypeDeclaration>, Expression> {
+        val typeDeclarations = mutableListOf<Declaration.TypeDeclaration>()
         while (iterator.peek().value is Token.Type) typeDeclarations.add(parseTypeDeclaration())
 
         return typeDeclarations to parseExpression()
     }
 
-    fun parseTypeDeclaration(): TypeDeclaration {
+    fun parseTypeDeclaration(): Declaration.TypeDeclaration {
         expectNext<Token.Type>(expectedError("expected type"))
         val name = parseUpperName()
 
@@ -27,16 +29,58 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         val dataConstructors = commaSeparated(::parseDataConstructor) { it !is Token.RBrace }
         expectNext<Token.RBrace>(expectedError("expected closing brace"))
 
-        return TypeDeclaration(name, typeVariables, dataConstructors)
+        return Declaration.TypeDeclaration(name, typeVariables, dataConstructors)
     }
 
-    fun parseDataConstructor(): DataConstructor {
+    fun parseDataConstructor(): Declaration.DataConstructor {
         val name = parseUpperName()
         expectNext<Token.LParen>(expectedError("expected left paren"))
         val fields = commaSeparated(::parseType) { it !is Token.RParen }
         expectNext<Token.RParen>(expectedError("expected right paren"))
 
-        return DataConstructor(name, fields)
+        return Declaration.DataConstructor(name, fields)
+    }
+
+    fun parseValueDeclaration(): Declaration.ValueDeclaration {
+        expectNext<Token.Let>(expectedError("expected let"))
+        val name = parseName()
+        expectNext<Token.Colon>(expectedError("expected type"))
+        val ty = parsePolytype()
+        expectNext<Token.Equals>(expectedError("expected equals"))
+        val expr = parseExpression()
+        expectNext<Token.Semicolon>(expectedError("expected semicolon"))
+        return Declaration.ValueDeclaration(name, ty, expr)
+    }
+
+    fun parseDeclaration(): Declaration {
+        val (span, token) = iterator.peek()
+        return when (token) {
+            is Token.Type -> parseTypeDeclaration()
+            is Token.Let -> parseValueDeclaration()
+            else -> throw RuntimeException("Expected a let or type to start a declaration at $span")
+        }
+    }
+
+    fun parseImport(): Import {
+        iterator.next()
+        val name = parseUpperName()
+        return Import.Qualified(name, name)
+    }
+
+    fun parseModule(): Module {
+        expectNext<Token.Module>(expectedError("expected module"))
+        val name = parseUpperName()
+
+        val imports = mutableListOf<Import>()
+        while (iterator.peek().value is Token.Import) {
+            imports += parseImport()
+        }
+
+        val declarations = mutableListOf<Declaration>()
+        while (iterator.peek().value !is Token.EOF) {
+            declarations += parseDeclaration()
+        }
+        return Module(name, imports, declarations)
     }
 
     private fun parsePolytype(): Polytype {
@@ -85,14 +129,14 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
                 Monotype.Var(tyVar)
             }
             is Token.UpperIdent -> {
-                val name = parseUpperName()
+                val (qualifier, name) = parseQualifiedUpper()
                 var args = emptyList<Monotype>()
                 if (iterator.peek().value is Token.LAngle) {
                     expectNext<Token.LAngle>(expectedError("expected open brace"))
                     args = commaSeparated(::parseType) { it !is Token.RAngle }
                     expectNext<Token.RAngle>(expectedError("expected closing brace"))
                 }
-                Monotype.Constructor(name, args)
+                Monotype.Constructor(qualifier, name, args)
             }
             else -> throw RuntimeException("expected type found $nextToken at $start")
         }
@@ -214,7 +258,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
     }
 
     private fun parseDataConstruction(): Expression.Construction {
-        val type = parseUpperName()
+        val (qualifier, type) = parseQualifiedUpper()
         expectNext<Token.DoubleColon>(expectedError("expected double colon"))
         val dtor = parseUpperName()
         expectNext<Token.LParen>(expectedError("expected open paren"))
@@ -222,7 +266,17 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         val exprs = commaSeparated(::parseExpression) { it !is Token.RParen }
         expectNext<Token.RParen>(expectedError("expected closing paren"))
 
-        return Expression.Construction(type, dtor, exprs)
+        return Expression.Construction(qualifier, type, dtor, exprs)
+    }
+
+    private fun parseQualifiedUpper(): Pair<Name?, Name> {
+        val x = parseUpperName()
+        return if (iterator.peek().value is Token.Dot) {
+            iterator.next()
+            x to parseUpperName()
+        } else {
+            null to x
+        }
     }
 
     fun parseMatch(): Expression.Match {
@@ -236,7 +290,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
 
     fun parseCase(): Case {
         val pattern = parsePattern()
-        expectNext<Token.Arrow>(expectedError("expected fat arrow"))
+        expectNext<Token.Arrow>(expectedError("expected arrow"))
         val body = parseExpression()
 
         return Case(pattern, body)
@@ -284,4 +338,10 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
     companion object {
         fun parseType(input: String): Polytype = Parser(Lexer(input)).parsePolytype()
     }
+}
+
+fun main() {
+    val listModule = File("stdlib/List.kiml").readText()
+
+    println(Parser(Lexer(listModule)).parseModule())
 }

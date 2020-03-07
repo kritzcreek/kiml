@@ -541,7 +541,10 @@ let rec sum : List<Int> -> Int =
     List::Cons(x, xs) -> add x (sum xs),
     List::Nil() -> 0,
   } in
-sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
+let rec range : Int -> Int -> List<Int> =
+  \low. \hi. if eq_int low hi then List::Nil() else List::Cons(low, range (add low 1) hi)
+in
+sum (map (add 1) (range 1 6))
 """
 
     val input2 =
@@ -552,7 +555,7 @@ sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
                     else if eq_int x 2 
                         then 1 
                         else add (fib (sub x 1)) (fib (sub x 2)) in 
-            fib 45
+            fib 31
         """
     val (tys, expr) = Parser(Lexer(input2)).parseInput()
 

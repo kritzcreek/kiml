@@ -1,0 +1,13 @@
+module List
+
+import Option
+
+type List<a> {
+    Cons(a, List<a>),
+    Nil()
+}
+
+let head : forall a. List<a> -> Option.Option<a> = \xs. match xs {
+  List::Nil() -> Option.Option::None(),
+  List::Cons(h, t) -> Option.Option::Some(h),
+};

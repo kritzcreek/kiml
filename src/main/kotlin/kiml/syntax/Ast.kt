@@ -35,7 +35,7 @@ sealed class Expression {
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
-    data class Construction(val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
+    data class Construction(val qualifier: Name?, val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
     fun subst(v: Name, replacement: Expression): Expression =
@@ -200,16 +200,8 @@ inline class Name(val v: String) {
     fun show(): Doc<Nothing> = v.text()
 }
 
-data class TypeDeclaration(
-    val name: Name,
-    val typeVariables: List<TyVar>,
-    val dataConstructors: List<DataConstructor>
-)
-
-data class DataConstructor(val name: Name, val args: List<Monotype>)
-
 sealed class Monotype {
-    data class Constructor(val name: Name, val arguments: List<Monotype>) : Monotype()
+    data class Constructor(val qualifier: Name?, val name: Name, val arguments: List<Monotype>) : Monotype()
     data class Unknown(val u: Int) : Monotype()
     data class Var(val v: TyVar) : Monotype()
     data class Function(val argument: Monotype, val result: Monotype) : Monotype()
@@ -251,7 +243,7 @@ sealed class Monotype {
         when (this) {
             is Var -> if (scrutinee == v) ty else this
             is Function -> Function(argument.subst(scrutinee, ty), result.subst(scrutinee, ty))
-            is Constructor -> Constructor(name, arguments.map { it.subst(scrutinee, ty) })
+            is Constructor -> copy(arguments = arguments.map { it.subst(scrutinee, ty) })
             else -> this
         }
 
@@ -262,8 +254,8 @@ sealed class Monotype {
     }
 
     companion object {
-        val int = Constructor(Name("Int"), listOf())
-        val bool = Constructor(Name("Bool"), listOf())
+        val int = Constructor(null, Name("Int"), listOf())
+        val bool = Constructor(null, Name("Bool"), listOf())
     }
 }
 
@@ -279,6 +271,22 @@ data class Polytype(val vars: List<TyVar>, val type: Monotype) {
         fun fromMono(monotype: Monotype): Polytype = Polytype(emptyList(), monotype)
     }
 }
+
+sealed class Declaration {
+    data class TypeDeclaration(
+        val name: Name,
+        val typeVariables: List<TyVar>,
+        val dataConstructors: List<DataConstructor>
+    ): Declaration()
+    data class DataConstructor(val name: Name, val args: List<Monotype>)
+    data class ValueDeclaration(val name: Name, val ty: Polytype, val expr: Expression): Declaration()
+}
+
+sealed class Import {
+    data class Qualified(val module: Name, val qualifier: Name): Import()
+}
+
+data class Module(val name: Name, val imports: List<Import>, val declarations: List<Declaration>)
 
 fun main() {
     println(

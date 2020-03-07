@@ -28,6 +28,8 @@ sealed class Token {
     data class UpperIdent(val ident: String) : Token()
     data class IntToken(val int: Int) : Token()
     data class BoolToken(val bool: Boolean) : Token()
+    object Module : Token()
+
     object EOF : Token()
     object Let: Token()
     object Rec: Token()
@@ -38,6 +40,7 @@ sealed class Token {
     object Then: Token()
     object Else: Token()
     object Match: Token()
+    object Import: Token()
 }
 
 data class Position(val line: Int, val column: Int) {
@@ -154,6 +157,8 @@ class Lexer(input: String) : Iterator<Spanned<Token>> {
             "forall" -> Forall
             "type" -> Type
             "match" -> Match
+            "module" -> Module
+            "import" -> Import
             else -> if (result.get(0).isUpperCase()) { UpperIdent(result) } else { Ident(result) }
         } to result.length
     }

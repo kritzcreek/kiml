@@ -1,6 +1,7 @@
 package kiml.frontend
 
 import kiml.syntax.*
+import java.io.File
 import kotlin.Exception
 
 data class Substitution(val subst: HashMap<Int, Monotype>) {
@@ -36,17 +37,22 @@ data class Environment(val env: HashMap<Name, Polytype> = hashMapOf()) {
 
 }
 
-data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<DataConstructor>) {
+data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<Declaration.DataConstructor>) {
     companion object {
         val empty = TypeInfo(listOf(), listOf())
     }
 }
 
-data class TypeMap(val tm: HashMap<Name, TypeInfo>)
+data class TypeMap(val tm: HashMap<Name, TypeInfo>) {
+    fun addType(tyDecl: Declaration.TypeDeclaration) {
+        tm[tyDecl.name] = TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors)
+    }
+}
 
 data class CheckState(
     var environment: Environment,
     var typeMap: TypeMap,
+    var imports: HashMap<Name, Pair<TypeMap, Environment>> = hashMapOf(),
     val substitution: Substitution = Substitution(HashMap()),
     var fresh_supply: Int = 0
 ) {
@@ -82,14 +88,18 @@ class TypeChecker(val checkState: CheckState) {
     private fun lookupName(v: Name): Monotype =
         checkState.environment[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
 
-    fun addType(tyDecl: TypeDeclaration) {
-        checkState.typeMap.tm.put(tyDecl.name, TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors))
+    fun addType(tyDecl: Declaration.TypeDeclaration) {
+        checkState.typeMap.addType(tyDecl)
     }
 
-    private fun lookupType(ty: Name): TypeInfo = checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
+    private fun lookupType(qualifier: Name?, ty: Name): TypeInfo = if (qualifier != null) {
+        checkState.imports[qualifier]?.first?.tm?.get(ty) ?: throw Exception("Unknown type $qualifier.$ty")
+    } else {
+        checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
+    }
 
-    private fun lookupDataConstructor(ty: Name, dtor: Name): Pair<List<TyVar>, List<Monotype>> {
-        val tyInfo = lookupType(ty)
+    private fun lookupDataConstructor(qualifier: Name?, ty: Name, dtor: Name): Pair<List<TyVar>, List<Monotype>> {
+        val tyInfo = lookupType(qualifier, ty)
         val dataConstructor = tyInfo.constructors.find { it.name == dtor }
             ?: throw Exception("Unknown dtor $ty::$dtor")
         return tyInfo.tyArgs to dataConstructor.args
@@ -248,12 +258,12 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
                 tyRes
             }
             is Expression.Construction -> {
-                val (tyArgs, fields) = lookupDataConstructor(expr.ty, expr.dtor)
+                val (tyArgs, fields) = lookupDataConstructor(expr.qualifier, expr.ty, expr.dtor)
                 val freshVars = tyArgs.map { it to freshUnknown() }
                 expr.fields.zip(fields).forEach { (expr, ty) ->
                     unify(ty.subst_many(freshVars), infer(expr))
                 }
-                Monotype.Constructor(expr.ty, freshVars.map { it.second })
+                Monotype.Constructor(expr.qualifier, expr.ty, freshVars.map { it.second })
             }
         }
     }
@@ -261,9 +271,11 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
     private fun inferPattern(pattern: Pattern, ty: Monotype): List<Pair<Name, Monotype>> {
         return when (pattern) {
             is Pattern.Constructor -> {
-                val (tyArgs, fields) = lookupDataConstructor(pattern.ty, pattern.dtor)
+                // TODO qualifier
+                val (tyArgs, fields) = lookupDataConstructor(null, pattern.ty, pattern.dtor)
                 val freshVars = tyArgs.map { it to freshUnknown() }
-                unify(ty, Monotype.Constructor(pattern.ty, freshVars.map { it.second }))
+                // TODO qualifier
+                unify(ty, Monotype.Constructor(null, pattern.ty, freshVars.map { it.second }))
                 pattern.fields.zip(fields).flatMap { (pat, ty) -> inferPattern(pat, ty.subst_many(freshVars)) }
             }
             is Pattern.Var -> listOf(pattern.v to ty)
@@ -271,30 +283,67 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
     }
 
     fun inferExpr(expr: Expression): Monotype = zonk(infer(expr)).also { println(checkState.substitution) }
+
+    fun inferModule(module: Module): Pair<TypeMap, Environment> {
+        val result = Environment()
+        val tyMap = TypeMap(hashMapOf())
+        for (decl in module.declarations) {
+            if (decl is Declaration.TypeDeclaration) {
+                addType(decl)
+                tyMap.addType(decl)
+            }
+        }
+
+        for (decl in module.declarations) {
+            if (decl is Declaration.ValueDeclaration) {
+                val inferred = inferExpr(decl.expr)
+                subsumes(Polytype.fromMono(inferred), decl.ty)
+                result[decl.name] = decl.ty
+                checkState.substitution.subst.clear()
+                checkState.fresh_supply = 0
+            }
+        }
+
+        return tyMap to result
+    }
 }
 
 fun main() {
-    val input =
-        """
-type Maybe<a> { Nothing(), Just(a) }
-type Either<a, b> { Left(a), Right(b) }
-type List<a> { Cons(a, List<a>), Nil() }
+//    val input =
+//        """
+//type Maybe<a> { Nothing(), Just(a) }
+//type Either<a, b> { Left(a), Right(b) }
+//type List<a> { Cons(a, List<a>), Nil() }
+//
+//let fromMaybe : forall a. a -> Maybe<a> -> a =
+//  \def. \x. match x {
+//    Maybe::Just(x) -> x,
+//    Maybe::Nothing() -> def
+//  } in
+//let rec map : forall a b. (a -> b) -> List<a> -> List<b> =
+//  \f. \ls. match ls {
+//    List::Nil() -> List::Nil(),
+//    List::Cons(x, xs) -> List::Cons(f x, map f xs),
+//  } in
+//map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
+//"""
+//    val (tys, expr) = Parser(Lexer(input)).parseInput()
+//    val tc = TypeChecker(CheckState.initial())
+//    tys.forEach { tc.addType(it) }
+//    println("${expr.pretty()} : ")
+//    println("   ${tc.inferExpr(expr).pretty()}")
 
-let fromMaybe : forall a. a -> Maybe<a> -> a =
-  \def. \x. match x {
-    Maybe::Just(x) -> x,
-    Maybe::Nothing() -> def
-  } in
-let rec map : forall a b. (a -> b) -> List<a> -> List<b> = 
-  \f. \ls. match ls {
-    List::Nil() -> List::Nil(),
-    List::Cons(x, xs) -> List::Cons(f x, map f xs),
-  } in
-map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
-"""
-    val (tys, expr) = Parser(Lexer(input)).parseInput()
-    val tc = TypeChecker(CheckState.initial())
-    tys.forEach { tc.addType(it) }
-    println("${expr.pretty()} : ")
-    println("   ${tc.inferExpr(expr).pretty()}")
+    val optionInput = File("stdlib/option.kiml").readText()
+    val optionModule = Parser(Lexer(optionInput)).parseModule()
+    val optionResult = TypeChecker(CheckState.initial()).inferModule(optionModule)
+
+    println(optionResult)
+
+    val listInput = File("stdlib/list.kiml").readText()
+    val listModule = Parser(Lexer(listInput)).parseModule()
+    val listCheckState = CheckState.initial()
+    listCheckState.imports[optionModule.name] = optionResult
+    val listResult = TypeChecker(listCheckState).inferModule(listModule)
+
+    println(listResult)
 }
