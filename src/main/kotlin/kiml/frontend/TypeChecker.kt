@@ -2,7 +2,6 @@ package kiml.frontend
 
 import kiml.syntax.*
 import java.io.File
-import kotlin.Exception
 
 data class Substitution(val subst: HashMap<Int, Monotype>) {
     fun apply(ty: Monotype): Monotype =
@@ -75,6 +74,12 @@ data class CheckState(
                 )
             )
             return CheckState(env, tyMap)
+        }
+
+        fun initial(imports: HashMap<Name, Pair<TypeMap, Environment>>): CheckState {
+            val result = initial()
+            result.imports = imports
+            return result
         }
     }
 }

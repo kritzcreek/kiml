@@ -1,0 +1,4 @@
+module Prelude
+
+let identity : forall a. a -> a = \x. x;
+let const : forall a b. a -> b -> a = \x. \y. x;

@@ -4,3 +4,8 @@ type Option<a> {
   Some(a),
   None(),
 }
+
+let map : forall a b. (a -> b) -> Option<a> -> Option<b> = \f. \x. match x {
+  Option::None() -> Option::None(),
+  Option::Some(a) -> Option::Some(f a),
+};

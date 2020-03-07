@@ -35,7 +35,9 @@ sealed class Expression {
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
-    data class Construction(val qualifier: Name?, val ty: Name, val dtor: Name, val fields: List<Expression>) : Expression()
+    data class Construction(val qualifier: Name?, val ty: Name, val dtor: Name, val fields: List<Expression>) :
+        Expression()
+
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
     fun subst(v: Name, replacement: Expression): Expression =
@@ -277,13 +279,18 @@ sealed class Declaration {
         val name: Name,
         val typeVariables: List<TyVar>,
         val dataConstructors: List<DataConstructor>
-    ): Declaration()
+    ) : Declaration()
+
     data class DataConstructor(val name: Name, val args: List<Monotype>)
-    data class ValueDeclaration(val name: Name, val ty: Polytype, val expr: Expression): Declaration()
+    data class ValueDeclaration(val name: Name, val ty: Polytype, val expr: Expression) : Declaration()
 }
 
 sealed class Import {
-    data class Qualified(val module: Name, val qualifier: Name): Import()
+    data class Qualified(val module: Name, val qualifier: Name) : Import()
+
+    fun name(): Name = when (this) {
+        is Qualified -> module
+    }
 }
 
 data class Module(val name: Name, val imports: List<Import>, val declarations: List<Declaration>)
