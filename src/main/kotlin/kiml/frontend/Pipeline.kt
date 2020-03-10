@@ -1,7 +1,7 @@
 package kiml.frontend
 
 import kiml.syntax.Module
-import kiml.syntax.Name
+import kiml.syntax.Namespace
 import java.io.File
 
 enum class CodegenTarget {
@@ -11,7 +11,7 @@ enum class CodegenTarget {
 
 data class Config(val codegenTarget: CodegenTarget, val outputDirectory: String)
 
-class Graph(val vertices: List<String>, edges: List<Pair<Int, Int>>) {
+class Graph(private val vertices: List<String>, edges: List<Pair<Int, Int>>) {
 
     private val numVertices = vertices.size
     private val adjacency = List(numVertices) { BooleanArray(numVertices) }
@@ -49,18 +49,20 @@ class Graph(val vertices: List<String>, edges: List<Pair<Int, Int>>) {
 
     companion object {
         fun fromModules(modules: List<Module>): Graph {
-            val vertices = modules.map { it.name.v }
-            fun vertexIndex(n: Name): Int = vertices.indexOf(n.v).also {
-                if (it < 0) throw Exception("Unknown module $n")
+            val vertices = modules.map { it.name }
+            fun vertexIndex(s: String): Int = vertices.indexOf(s).also {
+                if (it < 0) throw Exception("Unknown module $s")
             }
 
             val edges = modules.flatMap { module ->
-                module.imports.map { vertexIndex(module.name) to vertexIndex(it.name()) }
+                module.imports.map { vertexIndex(module.name) to vertexIndex(it.name().toString()) }
             }
             return Graph(vertices, edges)
         }
     }
 }
+
+
 
 class Pipeline {
     fun compileModules(files: List<File>, config: Config) {
@@ -69,20 +71,17 @@ class Pipeline {
         //toposort
         val topoOrdered = Graph.fromModules(parsedModules).topoSort() ?: throw Exception("Import cycles")
         val topoModules = parsedModules.sortedWith(Comparator { o1, o2 ->
-            topoOrdered.indexOf(o1.name.v).compareTo(topoOrdered.indexOf(o2.name.v))
+            topoOrdered.indexOf(o1.name).compareTo(topoOrdered.indexOf(o2.name))
         })
         // renaming
         // typechecking
-        val typeChecked: HashMap<Name, Pair<TypeMap, Environment>> = hashMapOf()
+        val typeChecked: HashMap<Namespace, Interface> = hashMapOf()
         topoModules.forEach {
-            typeChecked[it.name] = TypeChecker(CheckState.initial(typeChecked)).inferModule(it)
+            typeChecked[it.namespace] = TypeChecker(CheckState.initial(typeChecked)).inferModule(it)
         }
-
-        // codegen
-
-        // linking
-
         println(topoModules.map {it.name})
+        // codegen
+        // linking
     }
 }
 

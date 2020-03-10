@@ -3,7 +3,6 @@ package kiml.frontend
 import kiml.frontend.Token.Companion.get
 import kiml.syntax.*
 import java.io.File
-import kotlin.reflect.KFunction0
 
 
 class Parser(tokens: Iterator<Spanned<Token>>) {
@@ -63,13 +62,14 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
 
     fun parseImport(): Import {
         iterator.next()
-        val name = parseUpperName()
-        return Import.Qualified(name, name)
+        val moduleName = parseModuleName()
+        return Import.Qualified(moduleName, moduleName)
     }
 
     fun parseModule(): Module {
         expectNext<Token.Module>(expectedError("expected module"))
-        val name = parseUpperName()
+        val (namespace, mname) = parseNamespace()
+        val name = mname ?: throw Exception("expected modulename")
 
         val imports = mutableListOf<Import>()
         while (iterator.peek().value is Token.Import) {
@@ -80,7 +80,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         while (iterator.peek().value !is Token.EOF) {
             declarations += parseDeclaration()
         }
-        return Module(name, imports, declarations)
+        return Module(Namespace(namespace.components + name), imports, declarations)
     }
 
     private fun parsePolytype(): Polytype {
@@ -129,7 +129,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
                 Monotype.Var(tyVar)
             }
             is Token.UpperIdent -> {
-                val (qualifier, name) = parseQualifiedUpper()
+                val (qualifier, name) = parseNamespacedUpper()
                 var args = emptyList<Monotype>()
                 if (iterator.peek().value is Token.LAngle) {
                     expectNext<Token.LAngle>(expectedError("expected open brace"))
@@ -140,6 +140,28 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
             }
             else -> throw RuntimeException("expected type found $nextToken at $start")
         }
+    }
+
+    fun parseNamespace(): Pair<Namespace, Name?> {
+        var component: Name? = null
+        val components = mutableListOf<Name>()
+        while (iterator.peek().value is Token.UpperIdent) {
+            component = parseUpperName()
+            if (iterator.peek().value is Token.DoubleColon) {
+                iterator.next()
+                components += component
+                component = null
+            } else {
+                break
+            }
+        }
+        return Namespace(components) to component
+    }
+
+    fun parseModuleName(): Namespace {
+        val (ns, name) = parseNamespace()
+        if (name == null) throw Exception("expected a modulename")
+        return Namespace(ns.components + name)
     }
 
     private fun parseName(): Name {
@@ -157,8 +179,7 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         return TyVar(ident.value.ident)
     }
 
-    private fun parseVar(): Expression.Var = Expression.Var(parseName())
-
+    private fun parseVar(namespace: Namespace = Namespace.local): Expression.Var = Expression.Var(namespace, parseName())
 
     private fun parseInt(): Expression.Int {
         val (_, intToken) = expectNext<Token.IntToken>(expectedError("expected int literal"))
@@ -215,7 +236,14 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
             is Token.BoolToken -> parseBool()
             is Token.Let -> parseLet()
             is Token.If -> parseIf()
-            is Token.UpperIdent -> parseDataConstruction()
+            is Token.UpperIdent -> {
+                val (namespace, dtor) = parseNamespace()
+                when {
+                    dtor != null -> parseDataConstruction(namespace, dtor)
+                    iterator.peek().value is Token.Ident -> parseVar(namespace)
+                    else -> null
+                }
+            }
             is Token.Match -> parseMatch()
             else -> null
         }
@@ -257,26 +285,18 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         return Expression.If(condition, thenBranch, elseBranch)
     }
 
-    private fun parseDataConstruction(): Expression.Construction {
-        val (qualifier, type) = parseQualifiedUpper()
-        expectNext<Token.DoubleColon>(expectedError("expected double colon"))
-        val dtor = parseUpperName()
+    private fun parseDataConstruction(namespace: Namespace, dtor: Name): Expression.Construction {
         expectNext<Token.LParen>(expectedError("expected open paren"))
 
         val exprs = commaSeparated(::parseExpression) { it !is Token.RParen }
         expectNext<Token.RParen>(expectedError("expected closing paren"))
 
-        return Expression.Construction(qualifier, type, dtor, exprs)
+        return Expression.Construction(namespace, dtor, exprs)
     }
 
-    private fun parseQualifiedUpper(): Pair<Name?, Name> {
-        val x = parseUpperName()
-        return if (iterator.peek().value is Token.Dot) {
-            iterator.next()
-            x to parseUpperName()
-        } else {
-            null to x
-        }
+    private fun parseNamespacedUpper(): Pair<Namespace, Name> {
+        val (namespace, name) = parseNamespace()
+        return namespace to (name ?: throw Exception("expected upper name"))
     }
 
     fun parseMatch(): Expression.Match {
@@ -300,13 +320,12 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
         return if (iterator.peek().value is Token.Ident) {
             Pattern.Var(parseName())
         } else {
-            val ty = parseUpperName()
-            expectNext<Token.DoubleColon>(expectedError("expect double colon"))
-            val dtor = parseUpperName()
+            val (namespace, dtor) = parseNamespace()
+            if (dtor == null) throw Exception("expected a constructor pattern")
             expectNext<Token.LParen>(expectedError("expected open paren"))
             val fields = commaSeparated(::parsePattern) { it !is Token.RParen }
             expectNext<Token.RParen>(expectedError("expected open paren"))
-            Pattern.Constructor(ty, dtor, fields)
+            Pattern.Constructor(namespace, dtor, fields)
         }
     }
 
@@ -344,4 +363,8 @@ fun main() {
     val listModule = File("stdlib/List.kiml").readText()
 
     println(Parser(Lexer(listModule)).parseModule())
+
+    println(Parser(Lexer("Data::Option")).parseNamespace())
+
+
 }

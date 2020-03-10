@@ -2,10 +2,18 @@ package kiml.syntax
 
 import pretty.*
 
+data class Namespace(val components: List<Name>) {
+    override fun toString(): String = components.joinToString("::")
+    fun isLocal(): Boolean = components.isEmpty()
+    companion object {
+        val local = Namespace(emptyList())
+    }
+}
+
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
     data class Bool(val bool: Boolean) : Expression()
-    data class Var(val name: Name) : Expression()
+    data class Var(val namespace: Namespace, val name: Name) : Expression()
     data class Lambda(val binder: Name, val body: Expression) : Expression() {
         fun foldArguments(): Pair<List<Name>, Expression> {
             return when (body) {
@@ -35,8 +43,10 @@ sealed class Expression {
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
-    data class Construction(val qualifier: Name?, val ty: Name, val dtor: Name, val fields: List<Expression>) :
-        Expression()
+    data class Construction(val fullNamespace: Namespace, val dtor: Name, val fields: List<Expression>) : Expression() {
+        val ty: Name get() = fullNamespace.components.last()
+        val namespace: Namespace get() = Namespace(fullNamespace.components.dropLast(1))
+    }
 
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
@@ -99,7 +109,7 @@ sealed class Expression {
                 space() + thenCase.show()).group().nest(2) +
                 space() + ("else".text<Nothing>() + space() + elseCase.show()).group().nest(2)
         is Construction -> {
-            val dt = ty.show() + "::".text() + dtor.show() + lParen()
+            val dt = namespace.toString().text<Nothing>() + "::".text() + dtor.show() + lParen()
             val fs = fields.fold(nil<Nothing>()) { acc, it -> acc + it.show() + comma() + softLine() }
             dt + fs.nest(2) + rParen()
         }
@@ -163,11 +173,14 @@ data class Case(val pattern: Pattern, val expr: Expression) {
 }
 
 sealed class Pattern {
-    data class Constructor(val ty: Name, val dtor: Name, val fields: List<Pattern>) : Pattern()
+    data class Constructor(val fullNamespace: Namespace, val dtor: Name, val fields: List<Pattern>) : Pattern() {
+        val ty: Name get() = fullNamespace.components.last()
+        val namespace: Namespace get() = Namespace(fullNamespace.components.dropLast(1))
+    }
     data class Var(val v: Name) : Pattern()
 
     fun pretty(): String = when (this) {
-        is Constructor -> "$ty::$dtor(${fields.joinToString(", ") { it.pretty() }})"
+        is Constructor -> "$fullNamespace::$dtor(${fields.joinToString(", ") { it.pretty() }})"
         is Var -> v.toString()
     }
 
@@ -203,14 +216,14 @@ inline class Name(val v: String) {
 }
 
 sealed class Monotype {
-    data class Constructor(val qualifier: Name?, val name: Name, val arguments: List<Monotype>) : Monotype()
+    data class Constructor(val namespace: Namespace, val name: Name, val arguments: List<Monotype>) : Monotype()
     data class Unknown(val u: Int) : Monotype()
     data class Var(val v: TyVar) : Monotype()
     data class Function(val argument: Monotype, val result: Monotype) : Monotype()
 
     fun pretty(): String {
         return when (this) {
-            is Constructor -> "${this.name}" + if (arguments.isNotEmpty()) {
+            is Constructor -> "${if(namespace.isLocal()) "" else "$namespace::"}${this.name}" + if (arguments.isNotEmpty()) {
                 "<${this.arguments.joinToString(", ") { it.pretty() }}>"
             } else {
                 ""
@@ -256,8 +269,8 @@ sealed class Monotype {
     }
 
     companion object {
-        val int = Constructor(null, Name("Int"), listOf())
-        val bool = Constructor(null, Name("Bool"), listOf())
+        val int = Constructor(Namespace.local, Name("Int"), listOf())
+        val bool = Constructor(Namespace.local, Name("Bool"), listOf())
     }
 }
 
@@ -286,22 +299,24 @@ sealed class Declaration {
 }
 
 sealed class Import {
-    data class Qualified(val module: Name, val qualifier: Name) : Import()
+    data class Qualified(val module: Namespace, val qualifier: Namespace) : Import()
 
-    fun name(): Name = when (this) {
+    fun name(): Namespace = when (this) {
         is Qualified -> module
     }
 }
 
-data class Module(val name: Name, val imports: List<Import>, val declarations: List<Declaration>)
+data class Module(val namespace: Namespace, val imports: List<Import>, val declarations: List<Declaration>) {
+    val name: String get() = namespace.toString()
+}
 
 fun main() {
     println(
         Expression.App(
             Expression.App(
-                Expression.App(Expression.Var(Name("x")), Expression.Var(Name("y"))),
-                Expression.Var(Name("z"))
-            ), Expression.Var(Name("v"))
+                Expression.App(Expression.Var(Namespace.local, Name("x")), Expression.Var(Namespace.local, Name("y"))),
+                Expression.Var(Namespace.local, Name("z"))
+            ), Expression.Var(Namespace.local, Name("v"))
         ).pretty()
     )
 }

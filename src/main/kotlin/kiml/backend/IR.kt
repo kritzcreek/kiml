@@ -4,10 +4,7 @@ import kiml.frontend.Lexer
 import kiml.frontend.Parser
 import kiml.frontend.TypeInfo
 import kiml.frontend.TypeMap
-import kiml.syntax.Case
-import kiml.syntax.Expression
-import kiml.syntax.Name
-import kiml.syntax.Pattern
+import kiml.syntax.*
 import pretty.*
 
 sealed class LNName<A> {
@@ -255,9 +252,9 @@ class Lowering(private val typeMap: TypeMap) {
                             else env[it]?.let { index -> it to LNName.Bound<Name>(index) }
                         }
 
-                val exprFn: Expression = Expression.Var(topName)
+                val exprFn: Expression = Expression.Var(Namespace.local, topName)
                 val replacement = capturedVars.fold(exprFn) { acc, (name, _) ->
-                    Expression.App(acc, Expression.Var(name))
+                    Expression.App(acc, Expression.Var(Namespace.local, name))
                 }
                 val loweredExpr = liftFunction(topName, capturedVars, expr.expr.substLam(expr.binder, replacement))
 

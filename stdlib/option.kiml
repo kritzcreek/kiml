@@ -9,3 +9,7 @@ let map : forall a b. (a -> b) -> Option<a> -> Option<b> = \f. \x. match x {
   Option::None() -> Option::None(),
   Option::Some(a) -> Option::Some(f a),
 };
+
+let fromSome : forall a. Option<a> -> a = \x. match x {
+  Option::Some(a) -> a
+};

@@ -48,10 +48,12 @@ data class TypeMap(val tm: HashMap<Name, TypeInfo>) {
     }
 }
 
+data class Interface(val types: TypeMap, val values: Environment)
+
 data class CheckState(
     var environment: Environment,
     var typeMap: TypeMap,
-    var imports: HashMap<Name, Pair<TypeMap, Environment>> = hashMapOf(),
+    var imports: HashMap<Namespace, Interface> = hashMapOf(),
     val substitution: Substitution = Substitution(HashMap()),
     var fresh_supply: Int = 0
 ) {
@@ -76,7 +78,7 @@ data class CheckState(
             return CheckState(env, tyMap)
         }
 
-        fun initial(imports: HashMap<Name, Pair<TypeMap, Environment>>): CheckState {
+        fun initial(imports: HashMap<Namespace, Interface>): CheckState {
             val result = initial()
             result.imports = imports
             return result
@@ -90,21 +92,26 @@ class TypeChecker(val checkState: CheckState) {
 
     private fun zonk(ty: Monotype): Monotype = checkState.substitution.apply(ty)
 
-    private fun lookupName(v: Name): Monotype =
-        checkState.environment[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
+    private fun lookupName(namespace: Namespace, v: Name): Monotype =
+        if (namespace.isLocal()) {
+            checkState.environment[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
+        } else {
+            checkState.imports[namespace]?.values?.get(v)?.let(::instantiate)
+                ?: throw Exception("Unknown variable $namespace::$v")
+        }
 
     fun addType(tyDecl: Declaration.TypeDeclaration) {
         checkState.typeMap.addType(tyDecl)
     }
 
-    private fun lookupType(qualifier: Name?, ty: Name): TypeInfo = if (qualifier != null) {
-        checkState.imports[qualifier]?.first?.tm?.get(ty) ?: throw Exception("Unknown type $qualifier.$ty")
-    } else {
+    private fun lookupType(namespace: Namespace, ty: Name): TypeInfo = if (namespace.isLocal()) {
         checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
+    } else {
+        checkState.imports[namespace]?.types?.tm?.get(ty) ?: throw Exception("Unknown type $namespace::$ty")
     }
 
-    private fun lookupDataConstructor(qualifier: Name?, ty: Name, dtor: Name): Pair<List<TyVar>, List<Monotype>> {
-        val tyInfo = lookupType(qualifier, ty)
+    private fun lookupDataConstructor(namespace: Namespace, ty: Name, dtor: Name): Pair<List<TyVar>, List<Monotype>> {
+        val tyInfo = lookupType(namespace, ty)
         val dataConstructor = tyInfo.constructors.find { it.name == dtor }
             ?: throw Exception("Unknown dtor $ty::$dtor")
         return tyInfo.tyArgs to dataConstructor.args
@@ -175,7 +182,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
         if (ty1 == ty2) return
         when {
             ty1 is Monotype.Constructor && ty2 is Monotype.Constructor -> {
-                if (ty1.name != ty2.name) throw UnifyException(ty1, ty2, mutableListOf())
+                if (ty1.namespace != ty2.namespace || ty1.name != ty2.name) throw UnifyException(ty1, ty2, mutableListOf())
                 try {
                     ty1.arguments.zip(ty2.arguments) { t1, t2 ->
                         unify(t1, t2)
@@ -212,7 +219,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
             is Expression.Bool ->
                 Monotype.bool
             is Expression.Var ->
-                lookupName(expr.name)
+                lookupName(expr.namespace, expr.name)
             is Expression.Lambda -> {
                 val tyBinder = freshUnknown()
                 val tyBody = bindNameMono(expr.binder, tyBinder) { infer(expr.body) }
@@ -263,12 +270,12 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
                 tyRes
             }
             is Expression.Construction -> {
-                val (tyArgs, fields) = lookupDataConstructor(expr.qualifier, expr.ty, expr.dtor)
+                val (tyArgs, fields) = lookupDataConstructor(expr.namespace, expr.ty, expr.dtor)
                 val freshVars = tyArgs.map { it to freshUnknown() }
                 expr.fields.zip(fields).forEach { (expr, ty) ->
                     unify(ty.subst_many(freshVars), infer(expr))
                 }
-                Monotype.Constructor(expr.qualifier, expr.ty, freshVars.map { it.second })
+                Monotype.Constructor(expr.namespace, expr.ty, freshVars.map { it.second })
             }
         }
     }
@@ -276,11 +283,9 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
     private fun inferPattern(pattern: Pattern, ty: Monotype): List<Pair<Name, Monotype>> {
         return when (pattern) {
             is Pattern.Constructor -> {
-                // TODO qualifier
-                val (tyArgs, fields) = lookupDataConstructor(null, pattern.ty, pattern.dtor)
+                val (tyArgs, fields) = lookupDataConstructor(pattern.namespace, pattern.ty, pattern.dtor)
                 val freshVars = tyArgs.map { it to freshUnknown() }
-                // TODO qualifier
-                unify(ty, Monotype.Constructor(null, pattern.ty, freshVars.map { it.second }))
+                unify(ty, Monotype.Constructor(pattern.namespace, pattern.ty, freshVars.map { it.second }))
                 pattern.fields.zip(fields).flatMap { (pat, ty) -> inferPattern(pat, ty.subst_many(freshVars)) }
             }
             is Pattern.Var -> listOf(pattern.v to ty)
@@ -289,7 +294,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
 
     fun inferExpr(expr: Expression): Monotype = zonk(infer(expr)).also { println(checkState.substitution) }
 
-    fun inferModule(module: Module): Pair<TypeMap, Environment> {
+    fun inferModule(module: Module): Interface {
         val result = Environment()
         val tyMap = TypeMap(hashMapOf())
         for (decl in module.declarations) {
@@ -303,13 +308,14 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
             if (decl is Declaration.ValueDeclaration) {
                 val inferred = inferExpr(decl.expr)
                 subsumes(Polytype.fromMono(inferred), decl.ty)
+                checkState.environment[decl.name] = decl.ty
                 result[decl.name] = decl.ty
                 checkState.substitution.subst.clear()
                 checkState.fresh_supply = 0
             }
         }
 
-        return tyMap to result
+        return Interface(tyMap, result)
     }
 }
 
@@ -347,7 +353,7 @@ fun main() {
     val listInput = File("stdlib/list.kiml").readText()
     val listModule = Parser(Lexer(listInput)).parseModule()
     val listCheckState = CheckState.initial()
-    listCheckState.imports[optionModule.name] = optionResult
+    listCheckState.imports[optionModule.namespace] = optionResult
     val listResult = TypeChecker(listCheckState).inferModule(listModule)
 
     println(listResult)

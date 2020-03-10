@@ -7,10 +7,12 @@ type List<a> {
     Nil()
 }
 
-let head : forall a. List<a> -> Option.Option<a> = \xs. match xs {
-  List::Nil() -> Option.Option::None(),
-  List::Cons(h, t) -> Option.Option::Some(h),
+let head : forall a. List<a> -> Option::Option<a> = \xs. match xs {
+  List::Nil() -> Option::Option::None(),
+  List::Cons(h, t) -> Option::Option::Some(h),
 };
+
+let unsafeHead : forall a. List<a> -> a = \xs. Option::fromSome (head xs);
 
 let map : forall a b. (a -> b) -> List<a> -> List<b> =
   let rec go = \f. \xs. match xs {
