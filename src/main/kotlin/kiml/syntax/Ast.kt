@@ -8,6 +8,8 @@ data class Namespace(val components: List<Name>) {
     companion object {
         val local = Namespace(emptyList())
     }
+
+    fun show(): Doc<Nothing> = toString().text()
 }
 
 sealed class Expression {
@@ -43,11 +45,7 @@ sealed class Expression {
     data class Let(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class LetRec(val binder: Name, val type: Polytype?, val expr: Expression, val body: Expression) : Expression()
     data class If(val condition: Expression, val thenCase: Expression, val elseCase: Expression) : Expression()
-    data class Construction(val fullNamespace: Namespace, val dtor: Name, val fields: List<Expression>) : Expression() {
-        val ty: Name get() = fullNamespace.components.last()
-        val namespace: Namespace get() = Namespace(fullNamespace.components.dropLast(1))
-    }
-
+    data class Construction(val namespace: Namespace, val dtor: Name, val fields: List<Expression>) : Expression()
     data class Match(val expr: Expression, val cases: List<Case>) : Expression()
 
     fun subst(v: Name, replacement: Expression): Expression =
@@ -173,14 +171,11 @@ data class Case(val pattern: Pattern, val expr: Expression) {
 }
 
 sealed class Pattern {
-    data class Constructor(val fullNamespace: Namespace, val dtor: Name, val fields: List<Pattern>) : Pattern() {
-        val ty: Name get() = fullNamespace.components.last()
-        val namespace: Namespace get() = Namespace(fullNamespace.components.dropLast(1))
-    }
+    data class Constructor(val namespace: Namespace, val dtor: Name, val fields: List<Pattern>) : Pattern()
     data class Var(val v: Name) : Pattern()
 
     fun pretty(): String = when (this) {
-        is Constructor -> "$fullNamespace::$dtor(${fields.joinToString(", ") { it.pretty() }})"
+        is Constructor -> "$namespace::$dtor(${fields.joinToString(", ") { it.pretty() }})"
         is Var -> v.toString()
     }
 
@@ -196,7 +191,7 @@ sealed class Pattern {
 
     fun show(): Doc<Nothing> {
         return when (this) {
-            is Constructor -> ty.show() + "::".text() + dtor.show() + fields.map { it.show() }.encloseSep(
+            is Constructor -> namespace.show() + "::".text() + dtor.show() + fields.map { it.show() }.encloseSep(
                 lParen(),
                 rParen(),
                 comma()
