@@ -1,7 +1,8 @@
 package kiml.frontend
 
 import kiml.syntax.*
-import kotlin.Exception
+import kotlinx.collections.immutable.PersistentMap
+import kotlinx.collections.immutable.persistentHashMapOf
 
 data class Substitution(val subst: HashMap<Int, Monotype>) {
     fun apply(ty: Monotype): Monotype =
@@ -19,7 +20,7 @@ data class Substitution(val subst: HashMap<Int, Monotype>) {
         "{ " + subst.toList().joinToString("\n, ") { (u, ty) -> "u$u ↦ ${ty.pretty()}" } + "\n}"
 }
 
-data class Environment(val env: HashMap<Name, Polytype> = hashMapOf()) {
+data class Environment(val env: PersistentMap<Name, Polytype> = persistentHashMapOf()) {
     fun unknowns(): HashSet<Int> {
         val res = HashSet<Int>()
         for ((_, ty) in env) {
@@ -28,11 +29,24 @@ data class Environment(val env: HashMap<Name, Polytype> = hashMapOf()) {
         return res
     }
 
-    operator fun set(name: Name, type: Polytype) {
-        env[name] = type
-    }
+    fun extend(name: Name, type: Polytype): Environment = Environment(env.put(name, type))
+    fun extend(names: List<Pair<Name, Polytype>>): Environment = Environment(env.putAll(names.toMap()))
+    fun extendMono(names: List<Pair<Name, Monotype>>): Environment = extend(names.map { (name, ty) -> name to Polytype.fromMono(ty)})
+    fun extendMono(name: Name, type: Monotype): Environment = extend(name, Polytype.fromMono(type))
 
     operator fun get(name: Name): Polytype? = env[name]
+    companion object {
+        val primEnv: Environment = listOf(
+            "eq_int" to "Int -> Int -> Bool",
+            "add" to "Int -> Int -> Int",
+            "mul" to "Int -> Int -> Int",
+            "sub" to "Int -> Int -> Int",
+            "div" to "Int -> Int -> Int",
+            "mod" to "Int -> Int -> Int"
+        ).fold(Environment()) { acc, (name, ty) ->
+            acc.extend(Name(name), Parser.parseType(ty))
+        }
+    }
 
 }
 
@@ -45,30 +59,20 @@ data class TypeInfo(val tyArgs: List<TyVar>, val constructors: List<DataConstruc
 data class TypeMap(val tm: HashMap<Name, TypeInfo>)
 
 data class CheckState(
-    var environment: Environment,
     var typeMap: TypeMap,
     val substitution: Substitution = Substitution(HashMap()),
     var fresh_supply: Int = 0
 ) {
     companion object {
         fun initial(): CheckState {
-            val env = Environment()
-            listOf(
-                "eq_int" to "Int -> Int -> Bool",
-                "add" to "Int -> Int -> Int",
-                "mul" to "Int -> Int -> Int",
-                "sub" to "Int -> Int -> Int",
-                "div" to "Int -> Int -> Int"
-            ).forEach { (name, ty) ->
-                env[Name(name)] = Parser.parseType(ty)
-            }
+
             val tyMap = TypeMap(
                 hashMapOf(
                     Name("Int") to TypeInfo.empty,
                     Name("Bool") to TypeInfo.empty
                 )
             )
-            return CheckState(env, tyMap)
+            return CheckState(tyMap)
         }
     }
 }
@@ -79,11 +83,11 @@ class TypeChecker(val checkState: CheckState) {
 
     private fun zonk(ty: Monotype): Monotype = checkState.substitution.apply(ty)
 
-    private fun lookupName(v: Name): Monotype =
-        checkState.environment[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
+    private fun lookupName(env: Environment, v: Name): Monotype =
+        env[v]?.let(::instantiate) ?: throw Exception("Unknown variable $v")
 
     fun addType(tyDecl: TypeDeclaration) {
-        checkState.typeMap.tm.put(tyDecl.name, TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors))
+        checkState.typeMap.tm[tyDecl.name] = TypeInfo(tyDecl.typeVariables, tyDecl.dataConstructors)
     }
 
     private fun lookupType(ty: Name): TypeInfo = checkState.typeMap.tm[ty] ?: throw Exception("Unknown type $ty")
@@ -103,12 +107,12 @@ class TypeChecker(val checkState: CheckState) {
         return result
     }
 
-    private fun generalise(ty: Monotype): Polytype {
+    private fun generalise(env: Environment, ty: Monotype): Polytype {
         val ty = zonk(ty)
         val niceVars = "abcdefghijklmnopqrstuvwxyz".iterator()
         val quantified: MutableList<TyVar> = mutableListOf()
         val subst: HashMap<Int, Monotype> = HashMap()
-        val envUnknowns = checkState.environment.unknowns()
+        val envUnknowns = env.unknowns()
         for (free in ty.unknowns()) {
             if (!envUnknowns.contains(free)) {
                 val tyVar = TyVar(niceVars.nextChar().toString())
@@ -118,25 +122,6 @@ class TypeChecker(val checkState: CheckState) {
         }
         return Polytype(quantified, Substitution(subst).apply(ty))
     }
-
-    private fun <A> bindNamesMono(names: List<Pair<Name, Monotype>>, action: () -> A): A =
-        bindNames(names.map { (v, ty) -> v to Polytype.fromMono(ty) }, action)
-
-    private fun <A> bindNames(names: List<Pair<Name, Polytype>>, action: () -> A): A {
-        // Store the previous environment
-        val tmp = Environment(HashMap(checkState.environment.env))
-        names.forEach { (v, ty) -> checkState.environment.env[v] = ty }
-        val res = action()
-        // restore the environment
-        checkState.environment = tmp
-        return res
-    }
-
-    private fun <A> bindNameMono(v: Name, ty: Monotype, action: () -> A): A =
-        bindNamesMono(listOf(v to ty), action)
-
-    private fun <A> bindName(v: Name, ty: Polytype, action: () -> A): A =
-        bindNames(listOf(v to ty), action)
 
     private fun solveType(u: Int, ty: Monotype) {
         if (ty.unknowns().contains(u)) {
@@ -190,59 +175,58 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
         unify(instantiate(ty1), ty2.type)
     }
 
-    private fun infer(expr: Expression): Monotype {
+    private fun infer(env: Environment, expr: Expression): Monotype {
         return when (expr) {
             is Expression.Int ->
                 Monotype.int
             is Expression.Bool ->
                 Monotype.bool
             is Expression.Var ->
-                lookupName(expr.name)
+                lookupName(env, expr.name)
             is Expression.Lambda -> {
                 val tyBinder = freshUnknown()
-                val tyBody = bindNameMono(expr.binder, tyBinder) { infer(expr.body) }
+                val tyBody = infer(env.extendMono(expr.binder, tyBinder), expr.body)
                 Monotype.Function(tyBinder, tyBody)
             }
             is Expression.App -> {
                 val tyResult = freshUnknown()
-                val tyFun = infer(expr.function)
-                val tyArg = infer(expr.argument)
+                val tyFun = infer(env, expr.function)
+                val tyArg = infer(env, expr.argument)
                 unify(tyFun, Monotype.Function(tyArg, tyResult))
                 tyResult
             }
             is Expression.Let -> {
-                var tyBinder = Polytype.fromMono(infer(expr.expr))
+                var tyBinder = Polytype.fromMono(infer(env, expr.expr))
                 if (expr.type != null) {
                     subsumes(tyBinder, expr.type)
                     tyBinder = expr.type
                 }
-                bindName(expr.binder, tyBinder) { infer(expr.body) }
+                infer (env.extend(expr.binder, tyBinder), expr.body)
             }
             is Expression.LetRec -> {
                 val envBinder = expr.type ?: Polytype.fromMono(freshUnknown())
-                var tyBinder = bindName(expr.binder, envBinder) {
-                    Polytype.fromMono(infer(expr.expr))
-                }
+                var tyBinder = Polytype.fromMono(infer(env.extend(expr.binder, envBinder), expr.expr))
+
                 if (expr.type != null) {
                     subsumes(tyBinder, expr.type)
                     tyBinder = expr.type
                 }
-                bindName(expr.binder, tyBinder) { infer(expr.body) }
+                infer(env.extend(expr.binder, tyBinder), expr.body)
             }
             is Expression.If -> {
-                val tyCond = infer(expr.condition)
+                val tyCond = infer(env, expr.condition)
                 unify(tyCond, Monotype.bool)
-                val tyThen = infer(expr.thenCase)
-                val tyElse = infer(expr.elseCase)
+                val tyThen = infer(env,expr.thenCase)
+                val tyElse = infer(env, expr.elseCase)
                 unify(tyThen, tyElse)
                 tyThen // Could just as well be tyElse
             }
             is Expression.Match -> {
-                val tyExpr = infer(expr.expr)
+                val tyExpr = infer(env, expr.expr)
                 val tyRes = freshUnknown()
                 expr.cases.forEach {
                     val typedNames = inferPattern(it.pattern, tyExpr)
-                    val tyCase = bindNamesMono(typedNames) { infer(it.expr) }
+                    val tyCase = infer(env.extendMono(typedNames), it.expr)
                     unify(tyRes, tyCase)
                 }
                 tyRes
@@ -251,7 +235,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
                 val (tyArgs, fields) = lookupDataConstructor(expr.ty, expr.dtor)
                 val freshVars = tyArgs.map { it to freshUnknown() }
                 expr.fields.zip(fields).forEach { (expr, ty) ->
-                    unify(ty.subst_many(freshVars), infer(expr))
+                    unify(ty.subst_many(freshVars), infer(env, expr))
                 }
                 Monotype.Constructor(expr.ty, freshVars.map { it.second })
             }
@@ -270,7 +254,7 @@ Failed to match ${ty1.pretty()} with ${ty2.pretty()}
         }
     }
 
-    fun inferExpr(expr: Expression): Monotype = zonk(infer(expr)).also { println(checkState.substitution) }
+    fun inferExpr(expr: Expression): Monotype = zonk(infer(Environment.primEnv, expr)).also { println(checkState.substitution) }
 }
 
 fun main() {
@@ -290,6 +274,7 @@ let rec map : forall a b. (a -> b) -> List<a> -> List<b> =
     List::Nil() -> List::Nil(),
     List::Cons(x, xs) -> List::Cons(f x, map f xs),
   } in
+let isEven : Int -> Bool = \x. eq_int 0 (mod x 2) in 
 map isEven (map (sub 1) List::Cons(1, List::Cons(2, List::Nil())))
 """
     val (tys, expr) = Parser(Lexer(input)).parseInput()

@@ -308,6 +308,7 @@ class Codegen {
         defineBuiltinBinary("eq_int", Instr.I32Eq)
         defineBuiltinBinary("sub", Instr.I32Sub)
         defineBuiltinBinary("div", Instr.I32DivS)
+        defineBuiltinBinary("mod", Instr.I32RemS)
     }
 
     private fun getArity(funcName: String): Int =
@@ -525,7 +526,7 @@ type Either<a, b> { Left(a), Right(b) }
 type List<a> { Cons(a, List<a>), Nil() }
 
 let isEven : Int -> Bool =
-  \x. eq_int (div x 2) 0 in
+  \x. eq_int (mod x 2) 0 in
 let fromMaybe : forall a. a -> Maybe<a> -> a =
   \def. \x. match x {
     Maybe::Just(x) -> x,
