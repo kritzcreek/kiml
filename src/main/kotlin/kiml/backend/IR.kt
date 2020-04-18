@@ -9,6 +9,7 @@ import kiml.syntax.Expression
 import kiml.syntax.Name
 import kiml.syntax.Pattern
 import pretty.*
+import pretty.symbols.*
 
 sealed class LNName<A> {
     data class Free<A>(val v: A) : LNName<A>()
@@ -21,7 +22,7 @@ sealed class LNName<A> {
     fun show(): Doc<Nothing> =
         when (this) {
             is Free -> v.toString().text()
-            is Bound -> lAngle<Nothing>() +
+            is Bound -> lAngle() +
                     ix.depth.toString().text() +
                     comma() + space() +
                     ix.breadth.toString().text() + rAngle()
@@ -134,19 +135,19 @@ sealed class IR {
                 is Bool -> bool.toString().text()
                 is Var -> name.show()
                 is Application -> func.show() + space() + argument.show().enclose(lParen(), rParen())
-                is Pack -> "Pack".text<Nothing>() + (listOf(tag.doc<Nothing>()) + this.values.map { it.show() }).encloseSep(
+                is Pack -> "Pack".text() + (listOf(tag.doc()) + this.values.map { it.show() }).encloseSep(
                     lParen(),
                     rParen(),
-                    comma<Nothing>() + space()
+                    comma() + space()
                 )
-                is Match -> "match".text<Nothing>() + space() + scrutinee.show() + cases.map { it.show() }.encloseSep(
+                is Match -> "match".text() + space() + scrutinee.show() + cases.map { it.show() }.encloseSep(
                     lBrace(), rBrace(), comma()
                 )
-                is If -> "if".text<Nothing>() + space() + condition.show() + space() + "then".text() +
+                is If -> "if".text() + space() + condition.show() + space() + "then".text() +
                         space() + thenCase.show() +
                         space() + "else".text() + space() + elseCase.show()
                 is Let ->
-                    "let".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+                    "let".text() + space() + binder.show() + space() + equals() + space() +
                             expr.show() + space() + "in".text() + line() +
                             body.show()
                 is GetLocal -> "GetLocal($ix)".text()
@@ -159,10 +160,10 @@ sealed class IR {
             Case(tag, binders, body.instantiateInner(depth + 1, replacements))
 
         fun show(): Doc<Nothing> =
-            (tag.doc<Nothing>() + space() + binders.map { it.show() }.encloseSep(
+            (tag.doc() + space() + binders.map { it.show() }.encloseSep(
                 lParen(),
                 rParen(),
-                comma<Nothing>() + space()
+                comma() + space()
             ) + space() + "->".text()).group() + body.show()
     }
 
@@ -172,11 +173,11 @@ sealed class IR {
         val body: Expression
     ) {
         private fun show(): Doc<Nothing> {
-            val header = ("fun".text<Nothing>() + space() +
+            val header = ("fun".text() + space() +
                     name.v.text() +
                     arguments
-                        .map { it.v.text<Nothing>() }
-                        .encloseSep(lParen(), rParen(), comma<Nothing>() + space())).group()
+                        .map { it.v.text() }
+                        .encloseSep(lParen(), rParen(), comma() + space())).group()
             return (header + space() + lBrace() + line() + body.show()).nest(2) + line() + rBrace()
         }
 

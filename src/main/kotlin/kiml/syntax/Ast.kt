@@ -1,6 +1,7 @@
 package kiml.syntax
 
 import pretty.*
+import pretty.symbols.*
 
 sealed class Expression {
     data class Int(val int: kotlin.Int) : Expression()
@@ -75,7 +76,7 @@ sealed class Expression {
         is Bool -> bool.toString().text()
         is Var -> name.show()
         is Lambda -> {
-            var res = (("\\".text<Nothing>() + binder.show() + dot()).group() + space() + body.show()).group().nest(2)
+            var res = (("\\".text() + binder.show() + dot()).group() + space() + body.show()).group().nest(2)
             if (depth > 0) res = res.enclose(lParen(), rParen())
             res
         }
@@ -86,29 +87,29 @@ sealed class Expression {
             res
         }
         is Let ->
-            "let".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+            "let".text() + space() + binder.show() + space() + equals() + space() +
                     expr.show() + space() + "in".text() + line() +
                     body.show()
         is LetRec ->
-            "letrec".text<Nothing>() + space() + binder.show() + space() + equals() + space() +
+            "letrec".text() + space() + binder.show() + space() + equals() + space() +
                     expr.show() + space() + "in".text() + line() +
                     body.show()
-        is If -> (("if".text<Nothing>() + space() + condition.show() + space() + "then".text()).group() +
+        is If -> (("if".text() + space() + condition.show() + space() + "then".text()).group() +
                 space() + thenCase.show()).group().nest(2) +
-                space() + ("else".text<Nothing>() + space() + elseCase.show()).group().nest(2)
+                space() + ("else".text() + space() + elseCase.show()).group().nest(2)
         is Construction -> {
             val dt = ty.show() + "::".text() + dtor.show() + lParen()
-            val fs = fields.fold(nil<Nothing>()) { acc, it -> acc + it.show() + comma() + softLine() }
+            val fs = fields.fold(nil()) { acc, it -> acc + it.show() + comma() + softLine() }
             dt + fs.nest(2) + rParen()
         }
         is Match -> {
-            val header = "match".text<Nothing>() + space() + expr.show() + space() + lBrace()
+            val header = "match".text() + space() + expr.show() + space() + lBrace()
             val showCase = { case: Case ->
-                case.pattern.show() + space() + "=>".text() + space() + (line<Nothing>() +
+                case.pattern.show() + space() + "=>".text() + space() + (line() +
                         case.expr.show()).nest(2)
             }
-            val myCases = cases.fold(nil<Nothing>()) { acc, it -> acc + showCase(it) + comma() + line() }
-            header.group() + (line<Nothing>() + myCases).nest(2) + rBrace()
+            val myCases = cases.fold(nil()) { acc, it -> acc + showCase(it) + comma() + line() }
+            header.group() + (line() + myCases).nest(2) + rBrace()
         }
     }
 
