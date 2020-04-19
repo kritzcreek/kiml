@@ -76,10 +76,8 @@ class Codegen {
                 Instr.GetLocal(arity),
                 Instr.I32Store16(1, 0),
                 Instr.GetLocal(closureStart),
-                Instr.I32Const(4),
-                Instr.I32Add,
                 Instr.GetLocal(code_pointer),
-                Instr.I32Store(2, 0),
+                Instr.I32Store(2, 4),
                 Instr.GetLocal(closureStart)
             )
         }
@@ -183,27 +181,21 @@ class Codegen {
                 Instr.SetLocal(arity),
 
                 Instr.GetLocal(closure_start),
-                Instr.I32Const(2),
-                Instr.I32Add,
-                Instr.I32Load16S(1, 0),
+                Instr.I32Load16S(1, 2),
                 Instr.SetLocal(applied),
 
                 Instr.GetLocal(closure_start),
-                Instr.I32Const(4),
-                Instr.I32Add,
-                Instr.I32Load(2, 0),
+                Instr.I32Load(2, 4),
                 Instr.SetLocal(codePointer),
 
                 // Write the argument
+                Instr.GetLocal(closure_start),
                 Instr.I32Const(4),
                 Instr.GetLocal(applied),
                 Instr.I32Mul,
-                Instr.I32Const(8),
-                Instr.I32Add,
-                Instr.GetLocal(closure_start),
                 Instr.I32Add,
                 Instr.GetLocal(argument),
-                Instr.I32Store(2, 0),
+                Instr.I32Store(2, 8),
 
                 Instr.GetLocal(applied),
                 Instr.I32Const(1),
@@ -212,15 +204,13 @@ class Codegen {
                 Instr.I32LtS,
 
                 Instr.If(Value.I32),
-                // Location of applied
                 Instr.GetLocal(closure_start),
-                Instr.I32Const(2),
-                Instr.I32Add,
                 // applied++
                 Instr.GetLocal(applied),
                 Instr.I32Const(1),
                 Instr.I32Add,
-                Instr.I32Store16(1, 0),
+                // Applied is offset by 2 from closure start
+                Instr.I32Store16(1, 2),
 
                 // Not all arguments were applied so we return the closure
                 Instr.GetLocal(closure_start),
@@ -257,10 +247,8 @@ class Codegen {
                 Instr.GetLocal(tag),
                 Instr.I32Store16(1, 0),
                 Instr.GetLocal(packStart),
-                Instr.I32Const(2),
-                Instr.I32Add,
                 Instr.GetLocal(arity),
-                Instr.I32Store16(1, 0),
+                Instr.I32Store16(1, 2),
                 Instr.GetLocal(packStart)
             )
         }
@@ -412,9 +400,7 @@ class Codegen {
                 instrs.addAll(
                     listOf(
                         Instr.GetLocal(arg_pointer),
-                        Instr.I32Const(4 * i),
-                        Instr.I32Add,
-                        Instr.I32Load(2, 0)
+                        Instr.I32Load(2, 4L * i)
                     )
                 )
             }
@@ -542,7 +528,7 @@ let rec sum : List<Int> -> Int =
     List::Cons(x, xs) -> add x (sum xs),
     List::Nil() -> 0,
   } in
-sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
+sum (map (\x. add x 2) List::Cons(1, List::Cons(2, List::Nil())))
 """
 
     val input2 =
@@ -555,7 +541,7 @@ sum (map (\x. sub x 1) List::Cons(1, List::Cons(2, List::Nil())))
                         else add (fib (sub x 1)) (fib (sub x 2)) in 
             fib 45
         """
-    val (tys, expr) = Parser(Lexer(input2)).parseInput()
+    val (tys, expr) = Parser(Lexer(input)).parseInput()
 
     val typeMap = TypeMap(HashMap())
     tys.forEach { typeMap.tm[it.name] = TypeInfo(it.typeVariables, it.dataConstructors) }
